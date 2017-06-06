@@ -1,0 +1,6 @@
+syntax = "proto3";
+package session;
+
+// Control is a control packet over the control stream.
+message Control {
+}
