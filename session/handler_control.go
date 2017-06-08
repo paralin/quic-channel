@@ -2,32 +2,8 @@ package session
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 )
-
-// sessionControlState is the state for the session's control data.
-type sessionControlState struct {
-	mtx     sync.Mutex
-	config  *StreamHandlerConfig
-	packets chan Packet
-}
-
-// handleControl manages the control state of the session.
-func (s *sessionControlState) handleControl() error {
-	ctx := s.config.Session.context
-	for {
-		var packet Packet
-		select {
-		case <-ctx.Done():
-			return context.Canceled
-		case packet = <-s.packets:
-		}
-
-		fmt.Printf("Got control packet: %#v\n", packet)
-	}
-}
 
 // controlStreamHandlerBuilder builds control stream handlers.
 type controlStreamHandlerBuilder struct{}
@@ -52,9 +28,24 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 			config:  config,
 			packets: make(chan Packet, 5),
 		}
+		if config.Session.initiator {
+			state.initTimestamp = config.Session.started
+		}
 		config.Session.startPump(state.handleControl)
 		return state
 	}).(*sessionControlState)
+
+	state.activeHandlerMtx.Lock()
+	state.activeHandler = h
+	state.activeHandlerMtx.Unlock()
+
+	defer func() {
+		state.activeHandlerMtx.Lock()
+		if state.activeHandler == h {
+			state.activeHandler = nil
+		}
+		state.activeHandlerMtx.Unlock()
+	}()
 
 	for {
 		packet, err := config.PacketRw.ReadPacket(ControlPacketIdentifier.IdentifyPacket)
@@ -73,7 +64,7 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 // SendSessionInit sends ControlSessionInit to finalize starting the session.
 func (h *controlStreamHandler) SendSessionInit(timestamp time.Time) error {
 	return h.config.PacketRw.WritePacket(&ControlSessionInit{
-		Timestamp: uint64(timestamp.Unix()),
+		Timestamp: uint64(timestamp.UnixNano()),
 	})
 }
 

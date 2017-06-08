@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/signal"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/cmd/quicvpn/tls"
 	"github.com/fuserobotics/quic-channel/node"
 	"github.com/urfave/cli"
@@ -62,6 +65,16 @@ var NodeCommand = cli.Command{
 			go n.DialPeerAddr(peer)
 		}
 
-		return <-exitCh
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+
+		select {
+		case err := <-exitCh:
+			return err
+		case <-sigCh:
+			log.Info("Shutting down...")
+			// TODO: graceful shutdown
+			return nil
+		}
 	},
 }

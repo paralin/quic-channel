@@ -13,7 +13,13 @@ import (
 )
 
 // handshakeTimeout is the time allowed for a handshake.
-var handshakeTimeout = time.Duration(5 * time.Second)
+var handshakeTimeout = time.Duration(3 * time.Second)
+
+// keepAliveFrequency is how often we send a keep alive packet.
+var keepAliveFrequency = time.Duration(1) * time.Second
+
+// inactivityTimeout is the time allowed for inactivity after the handshake
+var inactivityTimeout = time.Duration(5) * time.Second
 
 // Session manages a connection with a remote peer.
 type Session struct {
@@ -37,8 +43,17 @@ type Session struct {
 	sessionData    map[uint32]interface{}
 }
 
+// SessionReadyDetails contains information about the session becoming ready.
+type SessionReadyDetails struct {
+	// InitiatedTimestamp is when this session was initiated.
+	InitiatedTimestamp time.Time
+}
+
 // SessionManager manages a session.
 type SessionManager interface {
+	// OnSessionReady is called when the session is finished initializing.
+	// Returning an error will terminate the session with the error.
+	OnSessionReady(details *SessionReadyDetails) error
 	// OnSessionClosed is called when a session is closed.
 	OnSessionClosed(sess *Session, err error)
 }
@@ -68,6 +83,7 @@ func NewSession(config SessionConfig) (*Session, error) {
 		inactivityTimeout: handshakeTimeout,
 		inactivityTimer:   time.NewTimer(handshakeTimeout),
 		sessionData:       make(map[uint32]interface{}),
+		manager:           config.Manager,
 	}
 	s.childContext, s.childContextCancel = context.WithCancel(config.Context)
 	if config.Initiator {
@@ -211,6 +227,18 @@ func (s *Session) GetOrPutData(id uint32, builder func() interface{}) interface{
 		s.sessionData[id] = data
 	}
 	return data
+}
+
+// ResetInactivityTimeout resets the timeout.
+// If zero is passed, maintains last duration.
+func (s *Session) ResetInactivityTimeout(dur time.Duration) {
+	if dur == 0 {
+		dur = s.inactivityTimeout
+	} else {
+		s.inactivityTimeout = dur
+	}
+
+	s.inactivityTimer.Reset(dur)
 }
 
 // DeleteData removes data from the session data store.

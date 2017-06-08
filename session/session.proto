@@ -30,3 +30,6 @@ message ControlSessionInit {
   // In case of a dispute, the oldest session will be kept.
   uint64 timestamp = 1;
 }
+
+// ControlKeepAlive is a keep alive packet.
+message ControlKeepAlive {}
