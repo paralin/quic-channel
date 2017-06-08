@@ -8,9 +8,6 @@ gengo:
 		--only_specified_files \
 		$$(pwd)/**/*.proto
 	go install ./...
-	./scripts/gen_root.bash
-	find . -name '*.pb.go' -exec sed -i -e 's/,\{0,1\}omitempty//g' {} \;
-	go install ./...
 
 deps:
 	go get -u github.com/square/goprotowrap/cmd/protowrap

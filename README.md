@@ -45,7 +45,7 @@ The primary goals of this project vs babeld:
 Most important concepts:
 
  - **Connection**: a one-hop link between two peers, I.E. a wifi network, a public internet link.
- - **Circuit**: a path between two peers, including 0-N peers in between, including network branches.
+ - **Circuit**: a path between two peers, including 0-N peers in between, as a series of Quic streams.
  - **Channel**: a QUIC connection made through an established circuit.
 
 The primary dilemma is that we have two choices:
@@ -91,9 +91,3 @@ Channels can be in the following states:
 
  - PENDING - The channel path is being built, and will expire quickly if not established.
  - ESTABLISHED - The channel path is established, and being monitored. Expires in a longer period of time.
-
-An example of a circuit collision event:
-
- - Peer receives a circuit build from peer1 -> peer2: `["peer1", "peer5", "thepeer"]`
- - Peer receives a circuit build from peer2 -> peer1: `["peer2", "peer6", "thepeer"]`
- - Drop the older circuit build request.

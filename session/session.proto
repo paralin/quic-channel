@@ -1,6 +1,32 @@
 syntax = "proto3";
 package session;
 
-// Control is a control packet over the control stream.
-message Control {
+// PacketHeader is the fixed-length header to a packet.
+message PacketHeader {
+  // Length of the following Control packet.
+  fixed32 packet_length = 1;
+  // Packet type is the kind of the following packet.
+  fixed32 packet_type = 2;
+}
+
+// EStreamType are the types of a stream.
+enum EStreamType {
+  // A control stream.
+  STREAM_CONTROL = 0;
+}
+
+// StreamInit initializes a stream.
+// packet_type: 1, expected as first message on stream
+message StreamInit {
+  // Stream type is the kind of the stream.
+  EStreamType stream_type = 1;
+}
+
+// ControlSessionInit initializes the session.
+// packet_type: 2, second message in first control stream.
+// Completes the handshake for the session.
+message ControlSessionInit {
+  // Timestamp is the time the originator began the session.
+  // In case of a dispute, the oldest session will be kept.
+  uint64 timestamp = 1;
 }
