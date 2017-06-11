@@ -6,24 +6,24 @@ import (
 
 // PacketIdentifier stores packet types and identifies them.
 type PacketIdentifier struct {
-	packetConstructors map[uint32]func() Packet
+	packetConstructors map[PacketType]func() Packet
 }
 
 // NewPacketIdentifier builds a new packet identifier.
 func NewPacketIdentifier() *PacketIdentifier {
-	return &PacketIdentifier{packetConstructors: make(map[uint32]func() Packet)}
+	return &PacketIdentifier{packetConstructors: make(map[PacketType]func() Packet)}
 }
 
 // AddPacketType adds a packet constructor to the identifier.
 func (i *PacketIdentifier) AddPacketType(constructors ...func() Packet) {
 	for _, constructor := range constructors {
 		sample := constructor()
-		i.packetConstructors[sample.PacketType()] = constructor
+		i.packetConstructors[sample.GetPacketType()] = constructor
 	}
 }
 
 // IdentifyPacket identifies the packet for the decoder.
-func (i *PacketIdentifier) IdentifyPacket(packetType uint32) (Packet, error) {
+func (i *PacketIdentifier) IdentifyPacket(packetType PacketType) (Packet, error) {
 	constructor, ok := i.packetConstructors[packetType]
 	if !ok {
 		return nil, fmt.Errorf("Unexpected packet type %d", packetType)

@@ -1,17 +1,18 @@
-package session
+package circuit
 
 import (
 	"context"
 	"time"
 
-	"github.com/fuserobotics/quic-channel/packet"
+	pkt "github.com/fuserobotics/quic-channel/packet"
+	"github.com/fuserobotics/quic-channel/session"
 )
 
 // controlStreamHandlerBuilder builds control stream handlers.
 type controlStreamHandlerBuilder struct{}
 
 // BuildHandler constructs the control stream handler.
-func (b *controlStreamHandlerBuilder) BuildHandler(config *StreamHandlerConfig) (StreamHandler, error) {
+func (b *controlStreamHandlerBuilder) BuildHandler(config *session.StreamHandlerConfig) (session.StreamHandler, error) {
 	return &controlStreamHandler{
 		config: config,
 	}, nil
@@ -19,7 +20,7 @@ func (b *controlStreamHandlerBuilder) BuildHandler(config *StreamHandlerConfig) 
 
 // controlStreamHandler manages control stream messages.
 type controlStreamHandler struct {
-	config *StreamHandlerConfig
+	config *session.StreamHandlerConfig
 }
 
 // Handle manages the control stream.
@@ -28,12 +29,13 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	state := config.Session.GetOrPutData(1, func() interface{} {
 		state := &sessionControlState{
 			config:  config,
-			packets: make(chan packet.Packet, 5),
+			context: ctx,
+			packets: make(chan pkt.Packet, 5),
 		}
-		if config.Session.initiator {
-			state.initTimestamp = config.Session.started
+		if config.Session.IsInitiator() {
+			state.initTimestamp = config.Session.GetStartTime()
 		}
-		config.Session.startPump(state.handleControl)
+		config.Session.StartPump(state.handleControl)
 		return state
 	}).(*sessionControlState)
 
@@ -50,7 +52,9 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	}()
 
 	for {
-		packet, err := config.PacketRw.ReadPacket(ControlPacketIdentifier.IdentifyPacket)
+		packet, err := config.PacketRw.ReadPacket(
+			pkt.PacketIdentifierFunc(ControlPacketIdentifier.IdentifyPacket),
+		)
 		if err != nil {
 			return err
 		}
@@ -71,6 +75,6 @@ func (h *controlStreamHandler) SendSessionInit(timestamp time.Time) error {
 }
 
 // StreamType returns the type of stream this handles.
-func (h *controlStreamHandler) StreamType() EStreamType {
-	return EStreamType_STREAM_CONTROL
+func (h *controlStreamHandler) StreamType() session.StreamType {
+	return session.StreamType(EStreamType_STREAM_CONTROL)
 }

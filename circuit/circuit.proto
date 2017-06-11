@@ -1,0 +1,8 @@
+syntax ="proto3";
+package circuit;
+
+// EStreamType are the types of Circuit streams.
+enum EStreamType {
+	// Control stream, used for control messages.
+	STREAM_CONTROL = 0;
+}

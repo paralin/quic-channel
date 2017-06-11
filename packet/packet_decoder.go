@@ -9,9 +9,6 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-// PacketIdentifierFunc identifies packets by ID, returning a message instance or error.
-type PacketIdentifierFunc func(packetType uint32) (Packet, error)
-
 // packetHeaderLen is the length of the fixed-size header.
 var packetHeaderLen = proto.Size(&PacketHeader{PacketLength: 1, PacketType: 1})
 
@@ -53,7 +50,7 @@ func (r *PacketReadWriter) ReadPacket(identifier PacketIdentifierFunc) (Packet, 
 	}
 
 	// Identify the message
-	body, err := identifier(r.header.PacketType)
+	body, err := identifier(PacketType(r.header.PacketType))
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +84,7 @@ func (r *PacketReadWriter) WritePacket(packet Packet) error {
 
 	headerMsg := &PacketHeader{
 		PacketLength: uint32(len(body)) + 1,
-		PacketType:   packet.PacketType(),
+		PacketType:   uint32(packet.GetPacketType()),
 	}
 
 	header, err := proto.Marshal(headerMsg)

@@ -1,4 +1,4 @@
-package session
+package circuit
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/fuserobotics/quic-channel/packet"
+	"github.com/fuserobotics/quic-channel/session"
 )
 
 // sessionControlState is the state for the session's control data.
 type sessionControlState struct {
-	config        *StreamHandlerConfig
+	context       context.Context
+	config        *session.StreamHandlerConfig
 	packets       chan packet.Packet
 	initTimestamp time.Time
 
@@ -21,10 +23,10 @@ type sessionControlState struct {
 
 // handleControl manages the control state of the session.
 func (s *sessionControlState) handleControl() error {
-	ctx := s.config.Session.childContext
+	ctx := s.context
 	l := s.config.Log
 	keepAliveTimer := time.NewTimer(keepAliveFrequency)
-	if !s.config.Session.initiator {
+	if !s.config.Session.IsInitiator() {
 		keepAliveTimer.Stop()
 	}
 	for {
@@ -49,7 +51,7 @@ func (s *sessionControlState) handleControl() error {
 			case *ControlSessionInit:
 				s.initTimestamp = time.Unix(0, int64(pkt.Timestamp))
 				l.WithField("timestamp", s.initTimestamp.String()).Debug("Session initialized")
-				err := s.config.Session.manager.OnSessionReady(&SessionReadyDetails{InitiatedTimestamp: s.initTimestamp})
+				err := s.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{InitiatedTimestamp: s.initTimestamp})
 				if err != nil {
 					return err
 				}

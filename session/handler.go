@@ -8,12 +8,15 @@ import (
 	"github.com/lucas-clemente/quic-go"
 )
 
+// StreamType is the type of stream.
+type StreamType uint32
+
 // StreamHandler manages a stream.
 type StreamHandler interface {
 	// Handle returns when the stream closes.
 	Handle(ctx context.Context) error
 	// StreamType returns the type of stream this handles.
-	StreamType() EStreamType
+	StreamType() StreamType
 }
 
 // StreamHandlerConfig are parameters passed to a StreamHandler.
@@ -36,7 +39,5 @@ type StreamHandlerBuilder interface {
 	BuildHandler(config *StreamHandlerConfig) (StreamHandler, error)
 }
 
-// StreamHandlerBuilders are stream handler builders for each stream type.
-var StreamHandlerBuilders = map[EStreamType]StreamHandlerBuilder{
-	EStreamType_STREAM_CONTROL: &controlStreamHandlerBuilder{},
-}
+// StreamHandlerBuilders is a map of stream type to stream handler.
+type StreamHandlerBuilders map[StreamType]StreamHandlerBuilder

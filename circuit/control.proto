@@ -1,0 +1,14 @@
+syntax = "proto3";
+package circuit;
+
+// ControlSessionInit initializes the session.
+// packet_type: 2, second message in first control stream.
+// Completes the handshake for the session.
+message ControlSessionInit {
+  // Timestamp is the time the originator began the session.
+  // In case of a dispute, the oldest session will be kept.
+  uint64 timestamp = 1;
+}
+
+// ControlKeepAlive is a keep alive packet.
+message ControlKeepAlive {}

@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/fuserobotics/quic-channel/session"
+	"github.com/fuserobotics/quic-channel/circuit"
 	"github.com/lucas-clemente/quic-go"
 )
 
@@ -24,9 +24,11 @@ type NodeConfig struct {
 
 // Node manages sessions with peers.
 type Node struct {
-	config         NodeConfig
-	listener       quic.Listener
-	sessionHandler nodeSessionHandler
+	config             NodeConfig
+	listener           quic.Listener
+	sessionHandler     *circuit.CircuitSessionManager
+	childContext       context.Context
+	childContextCancel context.CancelFunc
 }
 
 // NodeListenAddr builds a new node listening on a port with a configuration.
@@ -46,7 +48,8 @@ func NodeListenAddr(nc *NodeConfig) (nod *Node, reterr error) {
 		listener: listener,
 		config:   *nc,
 	}
-	nod.sessionHandler.Node = nod
+	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
+	nod.sessionHandler = circuit.NewCircuitSessionManager(nod.childContext)
 	go nod.listenPump()
 	return nod, nil
 }
@@ -68,21 +71,22 @@ func (n *Node) DialPeerAddr(addr string) error {
 
 // handleSession starts manging a incoming/outgoing session
 func (n *Node) handleSession(sess quic.Session, initiator bool) error {
-	_, err := session.NewSession(session.SessionConfig{
-		Context:   n.config.Context,
-		Manager:   &n.sessionHandler,
-		Initiator: initiator,
-		Session:   sess,
-	})
+	_, err := n.sessionHandler.BuildCircuitSession(sess, initiator)
+
 	if err != nil {
 		log.WithError(err).Warn("Dropped session")
 		sess.Close(err)
 	}
+
 	return err
 }
 
 // listenPump listens for incoming sessions.
-func (n *Node) listenPump() error {
+func (n *Node) listenPump() (retErr error) {
+	defer func() {
+		n.childContextCancel()
+	}()
+
 	for {
 		sess, err := n.listener.Accept()
 		if err != nil {
