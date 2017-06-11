@@ -1,4 +1,4 @@
-package session
+package packet
 
 import (
 	"github.com/golang/protobuf/proto"

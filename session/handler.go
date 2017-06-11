@@ -4,6 +4,7 @@ import (
 	"context"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/lucas-clemente/quic-go"
 )
 
@@ -26,7 +27,7 @@ type StreamHandlerConfig struct {
 	// Stream to handle.
 	Stream quic.Stream
 	// Packet Read/Writer
-	PacketRw *PacketReadWriter
+	PacketRw *packet.PacketReadWriter
 }
 
 // StreamHandlerBuilder constructs StreamHandlers.

@@ -1,5 +1,9 @@
 package session
 
+import (
+	"github.com/fuserobotics/quic-channel/packet"
+)
+
 // PacketType returns the packet type of the stream init packet.
 func (p *ControlSessionInit) PacketType() uint32 {
 	return 2
@@ -11,11 +15,11 @@ func (p *ControlKeepAlive) PacketType() uint32 {
 }
 
 // ControlPacketIdentifier identifies Control packets.
-var ControlPacketIdentifier = NewPacketIdentifier()
+var ControlPacketIdentifier = packet.NewPacketIdentifier()
 
 func init() {
 	ControlPacketIdentifier.AddPacketType(
-		func() Packet { return &ControlSessionInit{} },
-		func() Packet { return &ControlKeepAlive{} },
+		func() packet.Packet { return &ControlSessionInit{} },
+		func() packet.Packet { return &ControlKeepAlive{} },
 	)
 }

@@ -5,6 +5,7 @@ import (
 )
 
 // nodeSessionHandler handles session events.
+// It is separate from Node to hide it from the API surface.
 type nodeSessionHandler struct {
 	*Node
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/protocol"
 )
@@ -106,9 +107,9 @@ func (s *Session) handleIncomingStream(stream quic.Stream) error {
 	l := s.log.WithField("stream", int(stream.StreamID()))
 
 	l.Debug("Stream opened")
-	rw := NewPacketReadWriter(stream)
+	rw := packet.NewPacketReadWriter(stream)
 	si := &StreamInit{}
-	_, err := rw.ReadPacket(func(packetType uint32) (Packet, error) {
+	_, err := rw.ReadPacket(func(packetType uint32) (packet.Packet, error) {
 		if packetType != 1 {
 			return nil, fmt.Errorf("Expected packet type 1, got %d", packetType)
 		}
@@ -267,7 +268,7 @@ func (s *Session) OpenStream(streamType EStreamType) (handler StreamHandler, err
 	l = l.WithField("stream", uint32(streamId))
 	l.Debug("Stream opened")
 
-	rw := NewPacketReadWriter(stream)
+	rw := packet.NewPacketReadWriter(stream)
 	err = rw.WritePacket(&StreamInit{StreamType: streamType})
 	if err != nil {
 		return nil, err

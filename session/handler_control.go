@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"time"
+
+	"github.com/fuserobotics/quic-channel/packet"
 )
 
 // controlStreamHandlerBuilder builds control stream handlers.
@@ -26,7 +28,7 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	state := config.Session.GetOrPutData(1, func() interface{} {
 		state := &sessionControlState{
 			config:  config,
-			packets: make(chan Packet, 5),
+			packets: make(chan packet.Packet, 5),
 		}
 		if config.Session.initiator {
 			state.initTimestamp = config.Session.started

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/fuserobotics/quic-channel/packet"
 )
 
 // sessionControlState is the state for the session's control data.
 type sessionControlState struct {
 	config        *StreamHandlerConfig
-	packets       chan Packet
+	packets       chan packet.Packet
 	initTimestamp time.Time
 
 	activeHandlerMtx sync.Mutex
@@ -26,7 +28,7 @@ func (s *sessionControlState) handleControl() error {
 		keepAliveTimer.Stop()
 	}
 	for {
-		var packet Packet
+		var packet packet.Packet
 		select {
 		case <-ctx.Done():
 			return context.Canceled

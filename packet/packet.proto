@@ -1,0 +1,10 @@
+syntax = "proto3";
+package packet;
+
+// PacketHeader is the fixed-length header to a packet.
+message PacketHeader {
+  // Length of the following Control packet.
+  fixed32 packet_length = 1;
+  // Packet type is the kind of the following packet.
+  fixed32 packet_type = 2;
+}
