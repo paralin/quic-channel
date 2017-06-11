@@ -53,7 +53,7 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 
 	for {
 		packet, err := config.PacketRw.ReadPacket(
-			pkt.PacketIdentifierFunc(ControlPacketIdentifier.IdentifyPacket),
+			pkt.PacketIdentifierFunc(PacketIdentifier.IdentifyPacket),
 		)
 		if err != nil {
 			return err
@@ -67,9 +67,9 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	}
 }
 
-// SendSessionInit sends ControlSessionInit to finalize starting the session.
+// SendSessionInit sends SessionInit to finalize starting the session.
 func (h *controlStreamHandler) SendSessionInit(timestamp time.Time) error {
-	return h.config.PacketRw.WritePacket(&ControlSessionInit{
+	return h.config.PacketRw.WritePacket(&SessionInit{
 		Timestamp: uint64(timestamp.UnixNano()),
 	})
 }

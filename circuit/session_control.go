@@ -43,12 +43,12 @@ func (s *sessionControlState) handleControl() error {
 		case packet = <-s.packets:
 		}
 
-		if _, ok := packet.(*ControlKeepAlive); !ok {
+		if _, ok := packet.(*KeepAlive); !ok {
 			l.Debugf("Got control packet: %#v", packet)
 		}
 		if s.initTimestamp.IsZero() {
 			switch pkt := packet.(type) {
-			case *ControlSessionInit:
+			case *SessionInit:
 				s.initTimestamp = time.Unix(0, int64(pkt.Timestamp))
 				l.WithField("timestamp", s.initTimestamp.String()).Debug("Session initialized")
 				err := s.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{InitiatedTimestamp: s.initTimestamp})
@@ -64,7 +64,7 @@ func (s *sessionControlState) handleControl() error {
 		}
 
 		switch pkt := packet.(type) {
-		case *ControlKeepAlive:
+		case *KeepAlive:
 			s.config.Session.ResetInactivityTimeout(inactivityTimeout)
 			continue
 		default:
@@ -79,7 +79,7 @@ func (c *sessionControlState) sendKeepAlive() error {
 	defer c.activeHandlerMtx.Unlock()
 
 	if c.activeHandler != nil {
-		return c.activeHandler.config.PacketRw.WritePacket(&ControlKeepAlive{})
+		return c.activeHandler.config.PacketRw.WritePacket(&KeepAlive{})
 	}
 	return nil
 }

@@ -10,8 +10,8 @@ It is generated from these files:
 	github.com/fuserobotics/quic-channel/circuit/control.proto
 
 It has these top-level messages:
-	ControlSessionInit
-	ControlKeepAlive
+	SessionInit
+	KeepAlive
 */
 package circuit
 
