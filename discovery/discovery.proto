@@ -1,0 +1,28 @@
+syntax = "proto3";
+package discovery;
+
+// DiscoveryEvent represents an observation of a peer over a network.
+message DiscoveryEvent {
+  // PeerId is the PublicKeyHash array.
+  bytes peer_id = 1;
+  // Timestamp is when the event was observed.
+  uint64 timestamp = 2;
+  // Kind is the kind of discovery event.
+  DiscoveryEventKind kind = 3;
+  // Inter is the observed interface.
+  uint32 inter = 4;
+  // Extra info contains per-event-kind info.
+  bytes extra_info = 5;
+}
+
+// DiscoveryEventKind are kinds of discovery events.
+enum DiscoveryEventKind {
+  // When a UDP broadcast is observed over LAN
+  DISCOVER_OBSERVED_BROADCAST = 0;
+  // When the internet connection with this peer is established.
+  DISCOVER_INET_CONN_ESTABLISHED = 1;
+}
+
+// DiscoveryUDPPacket is a UDP discovery packet.
+message DiscoveryUDPPacket {
+}

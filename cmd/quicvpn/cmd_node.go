@@ -2,18 +2,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/cmd/quicvpn/tls"
+	"github.com/fuserobotics/quic-channel/discovery"
 	"github.com/fuserobotics/quic-channel/node"
 	"github.com/urfave/cli"
 )
 
 var nodeArgs struct {
-	ListenAddr string
+	ListenPort int
+	BcastPort  int
 	PeerAddr   cli.StringSlice
 }
 
@@ -22,11 +25,17 @@ var NodeCommand = cli.Command{
 	Name:  "node",
 	Usage: "Start the node.",
 	Flags: []cli.Flag{
-		cli.StringFlag{
+		cli.IntFlag{
 			Name:        "listen, l",
-			Usage:       "Address to listen on.",
-			Value:       ":2210",
-			Destination: &nodeArgs.ListenAddr,
+			Usage:       "Port to listen for sessions.",
+			Value:       2210,
+			Destination: &nodeArgs.ListenPort,
+		},
+		cli.IntFlag{
+			Name:        "bcast, b",
+			Usage:       "Port to use for UDP discovery broadcasts.",
+			Value:       2211,
+			Destination: &nodeArgs.BcastPort,
 		},
 		cli.StringSliceFlag{
 			Name:  "peer, p",
@@ -42,11 +51,23 @@ var NodeCommand = cli.Command{
 			return err
 		}
 
+		var discoveryWorkerConfigs []interface{}
+		if nodeArgs.BcastPort != 0 {
+			uconfs, err := discovery.GenerateUDPWorkerConfigs(nodeArgs.BcastPort, nodeArgs.ListenPort)
+			if err != nil {
+				return err
+			}
+			for _, conf := range uconfs {
+				discoveryWorkerConfigs = append(discoveryWorkerConfigs, conf)
+			}
+		}
+
 		exitCh := make(chan error, 1)
 		n, err := node.NodeListenAddr(&node.NodeConfig{
-			Context:   context.Background(),
-			TLSConfig: tlsConfig,
-			Addr:      nodeArgs.ListenAddr,
+			Context:          context.Background(),
+			TLSConfig:        tlsConfig,
+			Addr:             fmt.Sprintf(":%d", nodeArgs.ListenPort),
+			DiscoveryConfigs: discoveryWorkerConfigs,
 			ExitHandler: func(err error) {
 				exitCh <- err
 			},

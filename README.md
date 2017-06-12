@@ -100,7 +100,16 @@ Uncategorized thoughts:
 
  - Pending circuits could be given an expiry timestamp, which can be used as an upper bound for latency between two hosts.
  - First task will be spitting the logic into multiple go packages so we can re-use the Quic session management code for different level sessions.
- - TURN vs STUN: over an internet route, encode information in Route Build Probes about STUN connection info. Use this as a secondary channel path.
+ - TURN vs STUN: over an internet route, encode information in Circuit Probes about STUN connection info. Use this as a secondary channel path.
+ - Identify the interface a session is on. Make a reliable identifier for this (uint32 hash?).
+
+Peer tracking:
+
+ - Discovery should build a database of observed peers. Observed events should be tracked. Maybe use a BoltDB database?
+ - An event would be: UDP broadcast observed, Circuit Build relay observed, etc.
+ - This can be analyzed to infer potential connectivity with a peer before actually making a route request.
+ - Will also be useful for visualization.
+ - Can also store Routes that we can then use later.
 
 ## Packet Routing
 

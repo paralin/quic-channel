@@ -1,0 +1,29 @@
+syntax = "proto3";
+package route;
+
+// Route is a circuit probe route.
+message Route {
+  // Hops are the Hop steps/hops in the route, encoded.
+  repeated bytes hop = 1;
+
+  // HopSignatures are the signature for each hop in the hops array.
+  repeated HopSignature hop_signature = 2;
+
+  // Hop is a hop in the probe route.
+  message Hop {
+    // CertPem contains the PEM encoded cert chain, the last certificate is expected to be the identity.
+    string cert_pem = 1;
+    // BackwardInterface is the interface in the direction of the originator, used for session routing.
+    uint32 backward_interface = 2;
+    // ForwardInterface is the interface in the direction of the destination, used for verification.
+    uint32 forward_interace = 3;
+    // Timestamp is the time the route probe was processed.
+    uint64 timestamp = 4;
+  }
+
+  // HopSignature is a signature for the Hop.
+  message HopSignature {
+    // HopSignature is a sha256 hash signature by the last certificate in cert_pem.
+    bytes hop_signature = 1;
+  }
+}

@@ -1,6 +1,8 @@
 syntax = "proto3";
 package circuit;
 
+import "github.com/fuserobotics/quic-channel/route/route.proto";
+
 // ControlSessionInit initializes the session.
 // packet_type: 2, second message in first control stream.
 // Completes the handshake for the session.
@@ -13,3 +15,9 @@ message SessionInit {
 // ControlKeepAlive is a keep alive packet.
 // packet_type: 3, sent periodically to hold the conn open.
 message KeepAlive {}
+
+// CircuitProbe is an attempt to build a circuit.
+// packet_type: 4
+message CircuitProbe {
+  route.Route route = 1;
+}
