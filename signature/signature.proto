@@ -1,0 +1,14 @@
+syntax = "proto3";
+package signature;
+
+// SignedMessage is a signed protobuf message.
+message SignedMessage {
+  bytes message = 1;
+  bytes signature_salt = 2;
+  bytes signature = 3;
+  ESignedMessageHash hash_type = 4;
+}
+
+enum ESignedMessageHash {
+  HASH_SHA256 = 0;
+}

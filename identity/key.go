@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/pem"
+	"strings"
 )
 
 // PublicKeyHash is the hash of a public key.
@@ -33,4 +35,9 @@ func MarshalPublicKey(pkeys ...interface{}) ([]byte, error) {
 func HashPublicKey(pkey interface{}) (PublicKeyHash, error) {
 	data, err := MarshalPublicKey(pkey)
 	return sha256.Sum256(data), err
+}
+
+// MarshalHashIdentifier returns the 16 character human-readable hash of the public key.
+func (h *PublicKeyHash) MarshalHashIdentifier() string {
+	return strings.ToLower(string([]rune(base32.StdEncoding.EncodeToString(h[:]))[:16]))
 }

@@ -15,9 +15,3 @@ message SessionInit {
 // ControlKeepAlive is a keep alive packet.
 // packet_type: 3, sent periodically to hold the conn open.
 message KeepAlive {}
-
-// CircuitProbe is an attempt to build a circuit.
-// packet_type: 4
-message CircuitProbe {
-  route.Route route = 1;
-}

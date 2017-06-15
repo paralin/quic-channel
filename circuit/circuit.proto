@@ -1,8 +1,20 @@
-syntax ="proto3";
+syntax = "proto3";
 package circuit;
+
+import "github.com/fuserobotics/quic-channel/route/route.proto";
 
 // EStreamType are the types of Circuit streams.
 enum EStreamType {
-	// Control stream, used for control messages.
-	STREAM_CONTROL = 0;
+  // Control stream, used for control messages.
+  STREAM_CONTROL = 0;
+}
+
+// CircuitProbe is a probe to build a circuit.
+message CircuitProbe {
+  // Route contains the route so far.
+  route.Route route = 1;
+}
+
+// CircuitProbeRequest is the information about the CircuitProbe.
+message CircuitProbeRequest {
 }

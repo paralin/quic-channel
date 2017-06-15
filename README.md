@@ -83,8 +83,11 @@ Circuits can be in the following states:
 
 In the code we have the control scheme:
 
- - The **Channel** type builds a **Circuit Manager** which manages requests for **Circuits** with the peer.
- - The **Circuit Manager** manages the circuit probes for the peer, and multiplexing a buffered read/writer over the available circuits.
+ - The **Node** manages a **Discovery** that manages **Peer** in a database of last seen events and discovery events.
+ - The **Node** builds a **CircuitSession** with **Peer** on the local network.
+ - The **CircuitSession** manages communications with the peer, and emits **Circuit** for incoming valid circuit build operations.
+ - The **Channel** type is built and managed by the **Node**.
+ - The **Channel** type manages multiplexing a buffered read/writer over the available circuits to a peer.
  - The **Circuit** is instantiated when a **Circuit Probe** comes back with a valid remote circuit.
 
 The implementation of a channel / circuit:
