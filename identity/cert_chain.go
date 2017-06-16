@@ -11,7 +11,7 @@ import (
 type CertificateChain []*x509.Certificate
 
 // Validate validates the chain with a given CA.
-func (c CertificateChain) Validate(ca *x509.CertPool) error {
+func (c CertificateChain) Validate(ca *x509.Certificate) error {
 	if len(c) == 0 {
 		return errors.New("Cannot validate an empty certificate chain.")
 	}
@@ -21,9 +21,12 @@ func (c CertificateChain) Validate(ca *x509.CertPool) error {
 		intermediatePool.AddCert(inter)
 	}
 
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+
 	_, err := c[0].Verify(x509.VerifyOptions{
 		CurrentTime:   time.Now(),
-		Roots:         ca,
+		Roots:         caPool,
 		Intermediates: intermediatePool,
 	})
 	return err
@@ -35,9 +38,5 @@ func (c CertificateChain) HashPublicKey() (*PublicKeyHash, error) {
 		return nil, errors.New("Cannot hash public key of empty chain.")
 	}
 
-	pk, err := HashPublicKey(c[0].PublicKey)
-	if err != nil {
-		return nil, err
-	}
-	return &pk, nil
+	return HashPublicKey(c[0].PublicKey)
 }

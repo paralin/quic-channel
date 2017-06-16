@@ -2,6 +2,7 @@ package identity
 
 import (
 	"crypto/x509"
+	"net"
 
 	"github.com/fuserobotics/quic-channel/signature"
 )
@@ -64,7 +65,7 @@ func (i *Identity) ParseCertificates() ([]*x509.Certificate, error) {
 }
 
 // VerifyMessage verifies a signed message.
-func (i *ParsedIdentity) VerifyMessage(ca *x509.CertPool, sig *signature.SignedMessage) error {
+func (i *ParsedIdentity) VerifyMessage(ca *x509.Certificate, sig *signature.SignedMessage) error {
 	certsSlice, err := i.ParseCertificates()
 	if err != nil {
 		return err
@@ -72,4 +73,14 @@ func (i *ParsedIdentity) VerifyMessage(ca *x509.CertPool, sig *signature.SignedM
 
 	certs := CertificateChain(certsSlice)
 	return certs.Validate(ca)
+}
+
+// ToIPv6Addr generates an IP address from the identity.
+func (i *ParsedIdentity) ToIPv6Addr(ca *x509.Certificate) (net.IP, error) {
+	pkh, err := i.HashPublicKey()
+	if err != nil {
+		return nil, err
+	}
+
+	return pkh.ToIPv6Addr(ca)
 }

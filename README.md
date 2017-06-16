@@ -86,6 +86,8 @@ In the code we have the control scheme:
  - The **Node** manages a **Discovery** that manages **Peer** in a database of last seen events and discovery events.
  - The **Node** builds a **CircuitSession** with **Peer** on the local network.
  - The **CircuitSession** manages communications with the peer, and emits **Circuit** for incoming valid circuit build operations.
+ - The **CircuitBuilder** is built and managed by the **Node**.
+ - The **CircuitBuilder** is responsible for emitting route probes, storing possible routes to a peer...
  - The **Channel** type is built and managed by the **Node**.
  - The **Channel** type manages multiplexing a buffered read/writer over the available circuits to a peer.
  - The **Circuit** is instantiated when a **Circuit Probe** comes back with a valid remote circuit.
@@ -129,3 +131,28 @@ Peer tracking:
  - When connecting to a target, grab the channel (uses circuits) to the target.
  - The channel is a QUIC session with the target. Each stream will be used for a different connection over that channel.
 
+
+## IP Translation
+
+An IPV6 address looks like this:
+
+```
++--------+-+------------+-----------+----------------------------+
+| 7 bits |1|  40 bits   |  16 bits  |          64 bits           |
++--------+-+------------+-----------+----------------------------+
+| Prefix |L| Global ID  | Subnet ID |        Interface ID        |
++--------+-+------------+-----------+----------------------------+
+```
+
+The Prefix/L 8 bits will always be `0xfd`. The global ID and subnet ID
+are treated as a single 7 byte segment, and are determined by taking the
+first 6 bytes of the sha256 hash of the public key of the CA
+certificate. This allows multiple clusters to be joined simultaneously
+by running multiple quic-channel daemons together on the same machine
+with different CA certs. The first byte of the Global ID will be cc, so
+the first part of the IPV6 address will always be `fdcc:`. In the demos
+in this repository, the cluster ID would then be `4593:bfc4:cabe`,
+forming a base address of `fdcc:4593:bfc4:cabe::`.
+
+The interface ID is determined by taking the first 8 bytes of the sha256
+hash of the public key of the node.
