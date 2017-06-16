@@ -142,17 +142,19 @@ An IPV6 address looks like this:
 +--------+-+------------+-----------+----------------------------+
 | Prefix |L| Global ID  | Subnet ID |        Interface ID        |
 +--------+-+------------+-----------+----------------------------+
+| 0xfd  (2byte) | caCertH[:4]|           publicKeyH[:10]         |
++--------+-+------------+-----------+----------------------------+
 ```
 
-The Prefix/L 8 bits will always be `0xfd`. The global ID and subnet ID
-are treated as a single 7 byte segment, and are determined by taking the
-first 6 bytes of the sha256 hash of the public key of the CA
+The Prefix/L 8 bits will always be `0xfd`. The global ID is treated as a
+are treated as a single 5 byte segment, and is determined by taking the
+first 5 bytes of the sha256 hash of the public key of the CA
 certificate. This allows multiple clusters to be joined simultaneously
 by running multiple quic-channel daemons together on the same machine
 with different CA certs. The first byte of the Global ID will be cc, so
 the first part of the IPV6 address will always be `fdcc:`. In the demos
-in this repository, the cluster ID would then be `4593:bfc4:cabe`,
-forming a base address of `fdcc:4593:bfc4:cabe::`.
+in this repository, the cluster ID would then be `fdcc:4593:bfc4:ca`,
+forming a base address of `fdcc:4593:bfc4:ca00::`.
 
-The interface ID is determined by taking the first 8 bytes of the sha256
+The interface ID is determined by taking the first 10 bytes of the sha256
 hash of the public key of the node.
