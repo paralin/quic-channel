@@ -17,10 +17,11 @@ message SessionInitChallenge {
 
 // SessionInitResponse responds to the SessionInitChallenge.
 // packet_type: 3, third message in first control stream.
-// Completes the handshake for the session.
 message SessionInitResponse {
   // Signature is the signed SessionChallengeResponse, usually with a salt.
   signature.SignedMessage signature = 1;
+  // Challenge is the second challenge step, if step 2
+  SessionChallenge challenge = 2;
 }
 
 // SessionChallenge is the message the server asks the client to sign.

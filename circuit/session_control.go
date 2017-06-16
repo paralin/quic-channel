@@ -34,9 +34,10 @@ type sessionControlState struct {
 	packets        chan packet.Packet
 	keepAliveTimer *time.Timer
 
-	initTimestamp   time.Time
-	peerIdentity    *identity.ParsedIdentity
-	localPrivateKey *rsa.PrivateKey
+	initTimestamp       time.Time
+	peerIdentity        *identity.ParsedIdentity
+	localPrivateKey     *rsa.PrivateKey
+	expectChallengeResp bool
 
 	activeHandlerMtx sync.Mutex
 	activeHandler    *controlStreamHandler
@@ -55,9 +56,11 @@ func newSessionControlState(
 		config:  config,
 		packets: make(chan packet.Packet, 5),
 	}
-	s.activePacketHandler = s.handleHandshakePacket
-	if !config.Session.IsInitiator() {
+	if config.Session.IsInitiator() {
+		s.activePacketHandler = s.handleForwardHandshakeInitiator
+	} else {
 		s.initTimestamp = time.Now()
+		s.activePacketHandler = s.handleForwardHandshakeReceiver
 	}
 	return s
 }
@@ -109,66 +112,108 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 	return nil
 }
 
-// handleHandshakePacket handles the handshake sequence.
-func (c *sessionControlState) handleHandshakePacket(packet packet.Packet) (handleErr error) {
+// completeHandshake is called to complete the handshake sequence.
+func (c *sessionControlState) completeHandshake() error {
+	c.activePacketHandler = c.handleControlPacket
+	err := c.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{
+		Session:            c.config.Session,
+		InitiatedTimestamp: c.initTimestamp,
+		PeerIdentity:       c.peerIdentity,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.config.Session.ResetInactivityTimeout(inactivityTimeout)
+	c.keepAliveTimer.Reset(keepAliveFrequency)
+
+	pkh, err := c.peerIdentity.HashPublicKey()
+	if err != nil {
+		return err
+	}
+	hashId := pkh.MarshalHashIdentifier()
+	c.config.Log = c.config.Log.WithField("peer", hashId)
+
+	c.config.Log.Debug("Session handshake complete")
+	return nil
+}
+
+// handleForwardHandshake handles step 1 of the handshake process as the initiator.
+func (c *sessionControlState) handleForwardHandshakeInitiator(packet packet.Packet) (handleErr error) {
 	defer func() {
-		if handleErr == nil {
-			c.activePacketHandler = c.handleControlPacket
-			err := c.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{
-				Session:            c.config.Session,
-				InitiatedTimestamp: c.initTimestamp,
-				PeerIdentity:       c.peerIdentity,
-			})
-			if err != nil {
-				handleErr = err
-				return
-			}
-
-			c.config.Session.ResetInactivityTimeout(inactivityTimeout)
-			c.keepAliveTimer.Reset(keepAliveFrequency)
-
-			pkh, err := c.peerIdentity.HashPublicKey()
-			if err != nil {
-				handleErr = err
-				return
-			}
-			hashId := pkh.MarshalHashIdentifier()
-			c.config.Log = c.config.Log.WithField("peer", hashId)
-
-			c.config.Log.Debug("Session handshake complete")
-		} else {
+		if handleErr != nil {
 			c.config.Log.WithError(handleErr).Warn("Session handshake failed")
 		}
 	}()
 
-	// initTimestamp can only be zero if we are the initiator
-	if c.initTimestamp.IsZero() {
-		switch pkt := packet.(type) {
-		case *SessionInitChallenge:
-			c.initTimestamp = timestamp.TimestampToTime(pkt.Timestamp)
+	switch pkt := packet.(type) {
+	case *SessionInitChallenge:
+		c.initTimestamp = timestamp.TimestampToTime(pkt.Timestamp)
 
-			// respond with challenge response
-			if err := c.sendChallengeResponse(pkt.Challenge); err != nil {
+		// build next challenge step
+		nextChallenge, err := c.buildChallenge()
+		if err != nil {
+			return err
+		}
+
+		c.activePacketHandler = c.handleBackwardHandshake
+		// respond with challenge response
+		if err := c.sendChallengeResponse(pkt.Challenge, nextChallenge); err != nil {
+			return err
+		}
+
+		return nil
+	default:
+		return errors.New("Expected init challenge as we are the initiator.")
+	}
+
+}
+
+// handleForwardHandshakeReceiver handles the handshake as the receiver (not initiator).
+func (c *sessionControlState) handleForwardHandshakeReceiver(packet packet.Packet) (handleErr error) {
+	defer func() {
+		if handleErr != nil {
+			c.config.Log.WithError(handleErr).Warn("Session handshake failed")
+		}
+	}()
+
+	switch pkt := packet.(type) {
+	case *SessionInitResponse:
+		// Verify the challenge response
+		if err := c.verifyChallengeResponse(pkt.Signature); err != nil {
+			return err
+		}
+
+		// Respond to their challenge, if necessary.
+		if pkt.Challenge != nil {
+			if err := c.sendChallengeResponse(pkt.Challenge, nil); err != nil {
 				return err
 			}
-
-			// assume it worked. the session will be closed with an error otherwise.
-			return nil
-		default:
 		}
-	}
 
-	// peerIdentity can only be zero if we are not the initiator
-	if c.peerIdentity == nil {
-		switch pkt := packet.(type) {
-		case *SessionInitResponse:
-			// Verify the challenge response
-			return c.verifyChallengeResponse(pkt.Signature)
-		default:
+		// Complete the handshake
+		return c.completeHandshake()
+	default:
+		return errors.New("Expected init challenge response as the receiver.")
+	}
+}
+
+// handleBackwardHandshake handles step 2 of the handshake process.
+func (c *sessionControlState) handleBackwardHandshake(packet packet.Packet) (handleErr error) {
+	defer func() {
+		if handleErr != nil {
+			c.config.Log.WithError(handleErr).Warn("Session handshake failed")
+		} else {
+			handleErr = c.completeHandshake()
 		}
-	}
+	}()
 
-	return errors.New("Unexpected handshake packet sequence.")
+	switch pkt := packet.(type) {
+	case *SessionInitResponse:
+		return c.verifyChallengeResponse(pkt.Signature)
+	default:
+		return errors.New("Expected second challenge response.")
+	}
 }
 
 // sendPacket attempts to send a packet to the peer.
@@ -188,25 +233,32 @@ func (c *sessionControlState) sendKeepAlive() error {
 	return c.sendPacket(&KeepAlive{})
 }
 
-// sendChallenge sends the challenge.
-func (c *sessionControlState) sendChallenge() (sendChErr error) {
+// buildChallenge generates a new challenge.
+func (c *sessionControlState) buildChallenge() (*SessionChallenge, error) {
 	nonce := make([]byte, sessionNonceLen)
 	_, err := rand.Read(nonce)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.challengeNonce = nonce
+	return &SessionChallenge{ChallengeNonce: c.challengeNonce}, nil
+}
+
+// sendChallenge sends the first challenge (as the server).
+func (c *sessionControlState) sendChallenge() (sendChErr error) {
+	challenge, err := c.buildChallenge()
+	if err != nil {
+		return err
+	}
 
 	return c.sendPacket(&SessionInitChallenge{
-		Challenge: &SessionChallenge{
-			ChallengeNonce: nonce,
-		},
+		Challenge: challenge,
 		Timestamp: timestamp.TimeToTimestamp(c.initTimestamp),
 	})
 }
 
 // sendChallengeResponse sends the challenge response.
-func (c *sessionControlState) sendChallengeResponse(challenge *SessionChallenge) error {
+func (c *sessionControlState) sendChallengeResponse(challenge *SessionChallenge, nextChallenge *SessionChallenge) error {
 	nonceLen := len(challenge.ChallengeNonce)
 	if challenge == nil ||
 		nonceLen < sessionNonceMin ||
@@ -228,6 +280,7 @@ func (c *sessionControlState) sendChallengeResponse(challenge *SessionChallenge)
 
 	return c.sendPacket(&SessionInitResponse{
 		Signature: signedMsg,
+		Challenge: nextChallenge,
 	})
 }
 
