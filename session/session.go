@@ -2,12 +2,14 @@ package session
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/protocol"
@@ -27,6 +29,8 @@ type Session struct {
 	pumpErrors        chan error
 	inactivityTimer   *time.Timer
 	inactivityTimeout time.Duration
+	localIdentity     *identity.ParsedIdentity
+	caCert            *x509.Certificate
 
 	childContext       context.Context
 	childContextCancel context.CancelFunc
@@ -41,8 +45,12 @@ type Session struct {
 
 // SessionReadyDetails contains information about the session becoming ready.
 type SessionReadyDetails struct {
+	// Session is the session that became ready.
+	Session *Session
 	// InitiatedTimestamp is when this session was initiated.
 	InitiatedTimestamp time.Time
+	// PeerIdentity is the parsed peer identity.
+	PeerIdentity *identity.ParsedIdentity
 }
 
 // SessionManager manages a session.
@@ -66,6 +74,10 @@ type SessionConfig struct {
 	Initiator bool
 	// Stream handler builders
 	HandlerBuilders StreamHandlerBuilders
+	// Identity of the local node
+	LocalIdentity *identity.ParsedIdentity
+	// CaCertificate is the CA cert.
+	CaCertificate *x509.Certificate
 }
 
 // NewSession builds a new session.
@@ -82,8 +94,24 @@ func NewSession(config SessionConfig) (*Session, error) {
 		pumpErrors:            make(chan error, 2),
 		sessionData:           make(map[uint32]interface{}),
 		streamHandlers:        make(map[protocol.StreamID]StreamHandler),
+		localIdentity:         config.LocalIdentity,
 		log:                   log.WithField("remote", config.Session.RemoteAddr().String()),
+		caCert:                config.CaCertificate,
 	}
+	if config.LocalIdentity == nil || config.LocalIdentity.GetPrivateKey() == nil {
+		return nil, errors.New("Local identity must be set with a private key.")
+	}
+	localCertChain, err := config.LocalIdentity.ParseCertificates()
+	if err != nil {
+		return nil, err
+	}
+	if config.CaCertificate == nil {
+		return nil, errors.New("CA certificate must be given.")
+	}
+	if err := localCertChain.Validate(config.CaCertificate); err != nil {
+		return nil, err
+	}
+
 	s.childContext, s.childContextCancel = context.WithCancel(config.Context)
 	s.StartPump(s.acceptStreamPump)
 	go s.manageCloseConditions()
@@ -146,7 +174,6 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 	}
 
 	l := log.WithField("streamType", streamType)
-	l.Debug("Opening stream")
 	stream, err := s.session.OpenStream()
 	if err != nil {
 		return nil, err
@@ -154,7 +181,7 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 
 	streamId := stream.StreamID()
 	l = l.WithField("stream", uint32(streamId))
-	l.Debug("Stream opened")
+	l.Debug("Stream opened (by us)")
 
 	rw := packet.NewPacketReadWriter(stream)
 	err = rw.WritePacket(&StreamInit{StreamType: uint32(streamType)})
@@ -162,19 +189,31 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 		return nil, err
 	}
 
-	handler, err = handlerBuilder.BuildHandler(&StreamHandlerConfig{
-		Initiator: true,
-		Log:       log.WithField("stream", uint32(streamId)),
-		Session:   s,
-		PacketRw:  rw,
-		Stream:    stream,
-	})
+	shConfig := s.buildBaseStreamHandlerConfig(true)
+	shConfig.Log = log.WithField("stream", uint32(streamId))
+	shConfig.Session = s
+	shConfig.PacketRw = rw
+	shConfig.Stream = stream
+
+	handler, err = handlerBuilder.BuildHandler(shConfig)
 	if err != nil {
 		return nil, err
 	}
 
 	go s.runStreamHandler(streamId, handler)
+
+	l.Debug("Stream initialized")
 	return handler, nil
+}
+
+func (s *Session) buildBaseStreamHandlerConfig(initiator bool) *StreamHandlerConfig {
+	return &StreamHandlerConfig{
+		Initiator:     initiator,
+		Session:       s,
+		QuicSession:   s.session,
+		LocalIdentity: s.localIdentity,
+		CaCert:        s.caCert,
+	}
 }
 
 // handleIncomingStream handles an incoming quic stream.
@@ -199,13 +238,13 @@ func (s *Session) handleIncomingStream(stream quic.Stream) error {
 		return fmt.Errorf("Unknown stream type: %d", si.StreamType)
 	}
 
-	handler, err := handlerBuilder.BuildHandler(&StreamHandlerConfig{
-		Initiator: false,
-		Log:       l,
-		Session:   s,
-		PacketRw:  rw,
-		Stream:    stream,
-	})
+	shConfig := s.buildBaseStreamHandlerConfig(false)
+	shConfig.Log = l
+	shConfig.Session = s
+	shConfig.PacketRw = rw
+	shConfig.Stream = stream
+
+	handler, err := handlerBuilder.BuildHandler(shConfig)
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,6 @@ package circuit
 
 import (
 	"context"
-	"time"
 
 	pkt "github.com/fuserobotics/quic-channel/packet"
 	"github.com/fuserobotics/quic-channel/session"
@@ -27,12 +26,8 @@ type controlStreamHandler struct {
 func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	config := h.config
 	state := config.Session.GetOrPutData(1, func() interface{} {
-		state := &sessionControlState{
-			config:  config,
-			context: ctx,
-			packets: make(chan pkt.Packet, 5),
-		}
-		if config.Session.IsInitiator() {
+		state := newSessionControlState(ctx, config)
+		if !config.Session.IsInitiator() {
 			state.initTimestamp = config.Session.GetStartTime()
 		}
 		config.Session.StartPump(state.handleControl)
@@ -65,13 +60,6 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 		case state.packets <- packet:
 		}
 	}
-}
-
-// SendSessionInit sends SessionInit to finalize starting the session.
-func (h *controlStreamHandler) SendSessionInit(timestamp time.Time) error {
-	return h.config.PacketRw.WritePacket(&SessionInit{
-		Timestamp: uint64(timestamp.UnixNano()),
-	})
 }
 
 // StreamType returns the type of stream this handles.

@@ -12,6 +12,15 @@ QUIC Channel streams network traffic over the QUIC routing protocol. Reasoning:
 
 This repo is currently considered an experiment and is likely to change drastically over time.
 
+## Certificates
+
+The daemon expects the following files to be given:
+
+ - **ca.crt**: a single certificate, used as the root.
+ - **cert.crt**: one or more certificates, first cert is the server cert,
+   previous are intermediates.
+ - **key.pem**: private key for the last certificate in the cert.crt.
+
 ## Connectivity
 
 There are several planned interfaces to the router implementation:
@@ -158,3 +167,25 @@ forming a base address of `fdcc:4593:bfc4:ca00::`.
 
 The interface ID is determined by taking the first 10 bytes of the sha256
 hash of the public key of the node.
+
+This structure allows a few things:
+
+ - **URL Routing in SOCKS**: http://faqmce7yybsswacf.fuse:8080/test-website
+ - **IPv6 Routing**: optimized for Linux routing tables, use the cluster
+   prefix as your routing mask. Supports multiple clusters running on
+   the same machine with bridging between clusters using the IPv6
+   routing table. Will need detecting the routing table to share this
+   route, though.
+
+## Gossip Replacement for Serf
+
+QuicChannel (should be renamed) already is capable of the same features
+as Serf - in particular:
+
+ - **Peer state tracking**: using observed route build packets, can
+   maintain a "last seen" time for all observed peers.
+ - **Network coordinates**: using observed route build packets, it's
+   possible to infer/estimate the current topology of the network and
+   build network coordinates in the same way as Serf.
+ - **Gossip**: Serf's gossip features can easily be added to QC with a
+   control packets over the control stream.

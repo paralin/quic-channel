@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"time"
@@ -46,7 +45,7 @@ var NodeCommand = cli.Command{
 	Action: func(c *cli.Context) (retErr error) {
 		defer func() { retErr = wrapReturnedError(retErr) }()
 
-		tlsConfig, err := tls.LoadTLSConfig()
+		tlsConfig, caCert, err := tls.LoadTLSConfig()
 		if err != nil {
 			return err
 		}
@@ -63,14 +62,21 @@ var NodeCommand = cli.Command{
 		}
 
 		exitCh := make(chan error, 1)
-		n, err := node.NodeListenAddr(&node.NodeConfig{
-			Context:          context.Background(),
-			TLSConfig:        tlsConfig,
-			Addr:             fmt.Sprintf(":%d", nodeArgs.ListenPort),
-			DiscoveryConfigs: discoveryWorkerConfigs,
+		n, err := node.BuildNode(&node.NodeConfig{
+			Context:   context.Background(),
+			TLSConfig: tlsConfig,
+			CaCert:    caCert,
 			ExitHandler: func(err error) {
 				exitCh <- err
 			},
+		})
+		if err != nil {
+			return err
+		}
+
+		err = n.ListenAddr(&node.NodeListenConfig{
+			Port:             nodeArgs.ListenPort,
+			DiscoveryConfigs: discoveryWorkerConfigs,
 		})
 		if err != nil {
 			return err

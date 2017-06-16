@@ -2,6 +2,7 @@ package identity
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base32"
@@ -87,4 +88,16 @@ func HashCACertificate(caCert *x509.Certificate) (*ClusterCertHash, error) {
 	}
 	h := ClusterCertHash(*caHash)
 	return &h, nil
+}
+
+// ComparePublicKey compares public keys for equality.
+func ComparePublicKey(key1 *rsa.PublicKey, key2 *rsa.PublicKey) bool {
+	if key1 == key2 {
+		return true
+	}
+
+	k1b, _ := MarshalPublicKey(key1)
+	k2b, _ := MarshalPublicKey(key2)
+
+	return bytes.Compare(k1b, k2b) == 0
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"github.com/urfave/cli"
 	"io/ioutil"
@@ -60,25 +61,46 @@ func LoadCACert() (*x509.CertPool, error) {
 	return caPool, nil
 }
 
-// LoadTLSConfig loads the TLS config using the arguments.
-func LoadTLSConfig() (*tls.Config, error) {
-	// load the CA cert
-	tlsConfig := &tls.Config{InsecureSkipVerify: TlsArgs.Insecure}
-	if TlsArgs.CACertPath != "" {
-		var err error
-		tlsConfig.RootCAs, err = LoadCACert()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// load the server cert
-	serverCert, err := tls.LoadX509KeyPair(TlsArgs.CertPath, TlsArgs.PrivateKeyPath)
+func LoadCACertX509() (*x509.Certificate, error) {
+	caData, err := ioutil.ReadFile(TlsArgs.CACertPath)
 	if err != nil {
 		return nil, err
 	}
+
+	blk, _ := pem.Decode(caData)
+	if blk == nil {
+		return nil, errors.New("Ca file did not contain a pem certificate.")
+	}
+
+	return x509.ParseCertificate(blk.Bytes)
+}
+
+// LoadTLSConfig loads the TLS config using the arguments.
+func LoadTLSConfig() (*tls.Config, *x509.Certificate, error) {
+	// load the CA cert
+	tlsConfig := &tls.Config{InsecureSkipVerify: TlsArgs.Insecure}
+	if TlsArgs.CACertPath == "" {
+		return nil, nil, errors.New("CA certificate must be given.")
+	}
+
+	var err error
+	tlsConfig.RootCAs, err = LoadCACert()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	caCert, err := LoadCACertX509()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	serverCert, err := tls.LoadX509KeyPair(TlsArgs.CertPath, TlsArgs.PrivateKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	tlsConfig.Certificates = []tls.Certificate{serverCert}
-	return tlsConfig, nil
+	return tlsConfig, caCert, nil
 }
 
 // GenerateTLSCert generates the certificate and private key and saves them to a file.

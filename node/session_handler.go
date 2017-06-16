@@ -12,6 +12,7 @@ type nodeSessionHandler struct {
 // OnSessionReady is called when the session is finished initializing.
 // Returning an error will terminate the session with the error.
 func (h *nodeSessionHandler) OnSessionReady(details *session.SessionReadyDetails) error {
+	// Iterate over existing sessions.
 	return nil
 }
 

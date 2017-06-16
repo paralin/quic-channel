@@ -27,6 +27,7 @@ func (c CertificateChain) Validate(ca *x509.Certificate) error {
 	_, err := c[0].Verify(x509.VerifyOptions{
 		CurrentTime:   time.Now(),
 		Roots:         caPool,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		Intermediates: intermediatePool,
 	})
 	return err

@@ -12,7 +12,10 @@ It is generated from these files:
 It has these top-level messages:
 	CircuitProbe
 	CircuitProbeRequest
-	SessionInit
+	SessionInitChallenge
+	SessionInitResponse
+	SessionChallenge
+	SessionChallengeResponse
 	KeepAlive
 */
 package circuit

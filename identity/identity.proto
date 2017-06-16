@@ -3,6 +3,6 @@ package identity;
 
 // Identity contains just enough information to identify a peer.
 message Identity {
-  // CertPem contains each certificate in the chain, with the first certificate as the leaf.
-  repeated bytes cert_pem = 1;
+  // CertAsn1 contains each certificate in the chain, with the first certificate as the leaf.
+  repeated bytes cert_asn1 = 1;
 }

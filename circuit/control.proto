@@ -2,16 +2,41 @@ syntax = "proto3";
 package circuit;
 
 import "github.com/fuserobotics/quic-channel/route/route.proto";
+import "github.com/fuserobotics/quic-channel/identity/identity.proto";
+import "github.com/fuserobotics/quic-channel/signature/signature.proto";
 
-// ControlSessionInit initializes the session.
-// packet_type: 2, second message in first control stream.
-// Completes the handshake for the session.
-message SessionInit {
-  // Timestamp is the time the originator began the session.
+// SessionInitChallenge challenges the client with a salt.
+// packet_type: 2
+message SessionInitChallenge {
+  // Timestamp is the time the server began the session.
   // In case of a dispute, the oldest session will be kept.
   uint64 timestamp = 1;
+  // Challenge is the session challenge data.
+  SessionChallenge challenge = 2;
+}
+
+// SessionInitResponse responds to the SessionInitChallenge.
+// packet_type: 3, third message in first control stream.
+// Completes the handshake for the session.
+message SessionInitResponse {
+  // Signature is the signed SessionChallengeResponse, usually with a salt.
+  signature.SignedMessage signature = 1;
+}
+
+// SessionChallenge is the message the server asks the client to sign.
+message SessionChallenge {
+  // ChallengeNonce is a random bit string for the challenge.
+  bytes challenge_nonce = 1;
+}
+
+// SessionChallengeResponse is the signed challenge response.
+message SessionChallengeResponse {
+  // Challenge is the challenge we are responding to repeated again.
+  SessionChallenge challenge = 1;
+  // Identity is the identity of the peer.
+  identity.Identity identity = 2;
 }
 
 // ControlKeepAlive is a keep alive packet.
-// packet_type: 3, sent periodically to hold the conn open.
+// packet_type: 4, sent periodically to hold the conn open.
 message KeepAlive {}

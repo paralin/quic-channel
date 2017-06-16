@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"crypto/x509"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/lucas-clemente/quic-go"
 )
@@ -27,10 +29,16 @@ type StreamHandlerConfig struct {
 	Log *log.Entry
 	// Session is the session for the stream.
 	Session *Session
+	// QuicSession is the underlying Quic session.
+	QuicSession quic.Session
 	// Stream to handle.
 	Stream quic.Stream
 	// Packet Read/Writer
 	PacketRw *packet.PacketReadWriter
+	// Local identity, with private key.
+	LocalIdentity *identity.ParsedIdentity
+	// CaCert is the CA certificate.
+	CaCert *x509.Certificate
 }
 
 // StreamHandlerBuilder constructs StreamHandlers.

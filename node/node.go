@@ -2,8 +2,11 @@ package node
 
 import (
 	"context"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 
 	log "github.com/Sirupsen/logrus"
@@ -18,14 +21,21 @@ import (
 type NodeConfig struct {
 	// Context is the context for the node.
 	Context context.Context
-	// Addr is the address to listen on.
-	Addr string
 	// TLSConfig is the configuration for the node's TLS.
 	TLSConfig *tls.Config
-	// DiscoveryConfigs are discovery worker configurations.
-	DiscoveryConfigs []interface{}
+	// CaCert is the certificate for the CA.
+	CaCert *x509.Certificate
 	// ExitHandler is called when the node exits.
 	ExitHandler func(err error)
+}
+
+// NodeListenConfig is the the config for listening on a port and discovery.
+// Note: without setting this up, we can run in connect-out mode only.
+type NodeListenConfig struct {
+	// Port is the port to listen on.
+	Port int
+	// DiscoveryConfigs are discovery worker configurations.
+	DiscoveryConfigs []interface{}
 }
 
 // Node manages sessions with peers.
@@ -34,42 +44,83 @@ type Node struct {
 	listener           quic.Listener
 	childContext       context.Context
 	childContextCancel context.CancelFunc
-	sesssionHandler    nodeSessionHandler
+	sessionHandler     nodeSessionHandler
 	discovery          *discovery.Discovery
+	localIdentity      *identity.ParsedIdentity
 
 	// peers, keyed by sha256 of public key
 	peers map[identity.PublicKeyHash]*peer.Peer
 }
 
-// NodeListenAddr builds a new node listening on a port with a configuration.
-func NodeListenAddr(nc *NodeConfig) (nod *Node, reterr error) {
-	if nc == nil || nc.TLSConfig == nil || nc.Addr == "" {
-		return nil, errors.New("NodeConfig, TLSConfig, and Addr must be specified.")
+// ListenAddr tries to start listening on a port and starts discovery.
+func (n *Node) ListenAddr(lc *NodeListenConfig) error {
+	if n.listener != nil {
+		return errors.New("Can only call ListenAddr once!")
 	}
 
 	// start listeners
-	listener, err := quic.ListenAddr(nc.Addr, &quic.Config{TLSConfig: nc.TLSConfig})
+	listener, err := quic.ListenAddr(fmt.Sprintf(":%d", lc.Port), &quic.Config{TLSConfig: n.config.TLSConfig})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	log.WithField("addr", nc.Addr).Debug("Listening")
+	log.WithField("port", lc.Port).Debug("Listening")
+	n.listener = listener
+	go n.listenPump()
 
-	nod = &Node{
-		listener: listener,
-		config:   *nc,
-		discovery: discovery.NewDiscovery(discovery.DiscoveryConfig{
-			Context:   nc.Context,
-			TLSConfig: nc.TLSConfig,
-		}),
-	}
-	nod.sesssionHandler.Node = nod
-	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
-	go nod.listenPump()
-	for _, conf := range nod.config.DiscoveryConfigs {
-		if err := nod.discovery.AddDiscoveryWorker(conf); err != nil {
+	n.discovery = discovery.NewDiscovery(discovery.DiscoveryConfig{
+		Context:   n.childContext,
+		TLSConfig: n.config.TLSConfig,
+	})
+	for _, conf := range lc.DiscoveryConfigs {
+		if err := n.discovery.AddDiscoveryWorker(conf); err != nil {
 			log.WithError(err).Warn("Unable to start discovery worker")
 		}
 	}
+
+	return nil
+}
+
+// BuildNode builds a new node with a configuration.
+func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
+	if nc == nil || nc.TLSConfig == nil {
+		return nil, errors.New("NodeConfig, TLSConfig must be specified.")
+	}
+
+	nod = &Node{config: *nc}
+	nod.sessionHandler.Node = nod
+	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
+
+	// build identity
+	var err error
+	if len(nc.TLSConfig.Certificates) != 1 {
+		return nil, errors.New("TLSConfig.Certificates must have a single certificate chain.")
+	}
+
+	cert := nc.TLSConfig.Certificates[0]
+	rsaPrivate, ok := cert.PrivateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("Expected rsa private key, got: %#v", cert.PrivateKey)
+	}
+
+	chain := make(identity.CertificateChain, len(cert.Certificate))
+	for i, certb := range cert.Certificate {
+		chain[i], err = x509.ParseCertificate(certb)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := chain.Validate(nc.CaCert); err != nil {
+		return nil, err
+	}
+
+	nod.localIdentity, err = identity.NewParsedIdentityFromChain(chain)
+	if err != nil {
+		return nil, err
+	}
+	if err := nod.localIdentity.SetPrivateKey(rsaPrivate); err != nil {
+		return nil, err
+	}
+
 	return nod, nil
 }
 
@@ -104,7 +155,14 @@ func (n *Node) DialPeer(conn net.PacketConn, remoteAddr net.Addr, host string) e
 
 // HandleSession starts manging a incoming/outgoing session
 func (n *Node) HandleSession(sess quic.Session, initiator bool) error {
-	_, err := circuit.BuildCircuitSession(n.childContext, sess, initiator, &n.sesssionHandler)
+	_, err := circuit.BuildCircuitSession(
+		n.childContext,
+		sess,
+		initiator,
+		&n.sessionHandler,
+		n.localIdentity,
+		n.config.CaCert,
+	)
 
 	if err != nil {
 		log.WithError(err).Warn("Dropped session")
