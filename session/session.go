@@ -5,11 +5,13 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/identity"
+	"github.com/fuserobotics/quic-channel/network"
 	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/protocol"
@@ -31,6 +33,8 @@ type Session struct {
 	inactivityTimeout time.Duration
 	localIdentity     *identity.ParsedIdentity
 	caCert            *x509.Certificate
+	inter             *network.NetworkInterface
+	closedCallbacks   []func(s *Session, err error)
 
 	childContext       context.Context
 	childContextCancel context.CancelFunc
@@ -126,6 +130,19 @@ func (s *Session) IsInitiator() bool {
 // GetStartTime returns the time the session started.
 func (s *Session) GetStartTime() time.Time {
 	return s.started
+}
+
+// SetStartTime overrides the built-in start time.
+func (s *Session) SetStartTime(t time.Time) {
+	s.started = t
+}
+
+// CloseWithErr forces the session to close early.
+func (s *Session) CloseWithErr(err error) {
+	select {
+	case s.pumpErrors <- err:
+	default:
+	}
 }
 
 // GetManager returns the SessionManager for this session
@@ -287,6 +304,33 @@ func (s *Session) StartPump(pump func() error) {
 	}()
 }
 
+// GetInterface attempts to determine the interface this session is running on.
+func (s *Session) GetInterface() *network.NetworkInterface {
+	if s.inter != nil {
+		return s.inter
+	}
+
+	remAddr := s.session.RemoteAddr()
+	uadr, ok := remAddr.(*net.UDPAddr)
+	if !ok {
+		return nil
+	}
+
+	inter, _ := network.FromAddr(uadr.IP)
+	s.inter = inter
+	return inter
+}
+
+// GetLocalAddr returns the local address.
+func (s *Session) GetLocalAddr() net.Addr {
+	return s.session.LocalAddr()
+}
+
+// GetRemoteAddr returns the remote address.
+func (s *Session) GetRemoteAddr() net.Addr {
+	return s.session.RemoteAddr()
+}
+
 // acceptStreamPump handles incoming streams.
 func (s *Session) acceptStreamPump() error {
 	for {
@@ -301,10 +345,19 @@ func (s *Session) acceptStreamPump() error {
 	}
 }
 
+// AddCloseCallback adds a function to be called when the session closes.
+func (s *Session) AddCloseCallback(cb func(s *Session, err error)) {
+	s.closedCallbacks = append(s.closedCallbacks, cb)
+}
+
 // manageCloseConditions returns when the session closes.
 func (s *Session) manageCloseConditions() (sessErr error) {
 	defer func() {
 		l := s.log
+		for _, cb := range s.closedCallbacks {
+			go cb(s, sessErr)
+		}
+		s.closedCallbacks = nil
 		if sessErr != nil {
 			l = l.WithError(sessErr)
 		}

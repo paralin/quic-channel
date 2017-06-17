@@ -47,9 +47,7 @@ type Node struct {
 	sessionHandler     nodeSessionHandler
 	discovery          *discovery.Discovery
 	localIdentity      *identity.ParsedIdentity
-
-	// peers, keyed by sha256 of public key
-	peers map[identity.PublicKeyHash]*peer.Peer
+	peerDb             *peer.PeerDatabase
 }
 
 // ListenAddr tries to start listening on a port and starts discovery.
@@ -86,7 +84,7 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 		return nil, errors.New("NodeConfig, TLSConfig must be specified.")
 	}
 
-	nod = &Node{config: *nc}
+	nod = &Node{config: *nc, peerDb: peer.NewPeerDatabase()}
 	nod.sessionHandler.Node = nod
 	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
 

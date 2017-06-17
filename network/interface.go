@@ -72,3 +72,31 @@ func ListNetworkInterfaces() ([]*NetworkInterface, error) {
 
 	return result, nil
 }
+
+// FromAddr attempts to determine which interface an address belongs to.
+func FromAddr(addr net.IP) (*NetworkInterface, error) {
+	netInters, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, inter := range netInters {
+		addrs, err := inter.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, iaddr := range addrs {
+			ipn, ok := iaddr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ipn.Contains(addr) {
+				return func(ni net.Interface) *NetworkInterface {
+					return &NetworkInterface{Interface: &ni}
+				}(inter), nil
+			}
+		}
+	}
+
+	return nil, nil
+}

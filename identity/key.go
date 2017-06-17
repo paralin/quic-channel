@@ -58,7 +58,14 @@ func HashPublicKey(pkey interface{}) (*PublicKeyHash, error) {
 
 // MarshalHashIdentifier returns the 10 byte human-readable hash of the public key.
 func (h *PublicKeyHash) MarshalHashIdentifier() string {
-	return strings.ToLower(string([]rune(base32.StdEncoding.EncodeToString(h[:10]))))
+	var partialHash PublicKeyPartialHash
+	copy(partialHash[:], (*h)[:])
+	return (&partialHash).MarshalHashIdentifier()
+}
+
+// MarshalHashIdentifier returns the 10 byte human-readable hash of the public key partial.
+func (h *PublicKeyPartialHash) MarshalHashIdentifier() string {
+	return strings.ToLower(string([]rune(base32.StdEncoding.EncodeToString(h[:]))))
 }
 
 // ToIPv6Addr converts the public key hash to a IP address.

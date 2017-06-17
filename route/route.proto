@@ -8,6 +8,9 @@ import "github.com/fuserobotics/quic-channel/signature/signature.proto";
 message Route {
   // Hops are the hop steps in the route.
   repeated signature.SignedMessage hop = 1;
+  // Destination is the destination of the route.
+  // Source can be inferred from the first hop.
+  Destination destination = 2;
 
   // Hop is a hop in the probe route.
   message Hop {
@@ -19,5 +22,11 @@ message Route {
     uint32 forward_interface = 3;
     // Timestamp is the time the route probe was processed.
     uint64 timestamp = 4;
+  }
+
+  // Destination is the destination of the route.
+  message Destination {
+    // Match by public key hash. Partials are accepted, with a minimum length.
+    bytes match_public_key = 1;
   }
 }

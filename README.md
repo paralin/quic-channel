@@ -166,7 +166,11 @@ in this repository, the cluster ID would then be `fdcc:4593:bfc4:ca`,
 forming a base address of `fdcc:4593:bfc4:ca00::`.
 
 The interface ID is determined by taking the first 10 bytes of the sha256
-hash of the public key of the node.
+hash of the public key of the node. Notice that both the interface ID and the
+text-based base32 identifier are the same length (10 bytes).
+
+When routing, we can identify a peer by a 10-32 mask of the first N bytes of the
+public key hash.
 
 This structure allows a few things:
 
