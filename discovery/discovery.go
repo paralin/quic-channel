@@ -13,6 +13,7 @@ import (
 type Discovery struct {
 	config     DiscoveryConfig
 	pumpErrors chan error
+	peerDb     *peer.PeerDatabase
 }
 
 // DiscoveryConfig is the information used to construct a Discovery.
@@ -23,6 +24,8 @@ type DiscoveryConfig struct {
 	TLSConfig *tls.Config
 	// EventHandlers get calls when events occur.
 	EventHandlers []DiscoveryEventHandler
+	// PeerDb is the peer database.
+	PeerDb *peer.PeerDatabase
 }
 
 // DiscoveryEventHandler has callbacks for events in the discovery.
@@ -36,6 +39,7 @@ func NewDiscovery(config DiscoveryConfig) *Discovery {
 	return &Discovery{
 		config:     config,
 		pumpErrors: make(chan error, 2),
+		peerDb:     config.PeerDb,
 	}
 }
 

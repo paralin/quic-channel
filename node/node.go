@@ -68,6 +68,7 @@ func (n *Node) ListenAddr(lc *NodeListenConfig) error {
 	n.discovery = discovery.NewDiscovery(discovery.DiscoveryConfig{
 		Context:   n.childContext,
 		TLSConfig: n.config.TLSConfig,
+		PeerDb:    n.peerDb,
 	})
 	for _, conf := range lc.DiscoveryConfigs {
 		if err := n.discovery.AddDiscoveryWorker(conf); err != nil {
