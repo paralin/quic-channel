@@ -22,6 +22,11 @@ func (c *sessionControlState) handleCircuitTermination(pkt *CircuitProbe, pr *ro
 		return err
 	}
 
+	remotePkh, err := hopIdents[0].HashPublicKey()
+	if err != nil {
+		return err
+	}
+
 	remoteAddr, err := hopIdents[0].ToIPv6Addr(c.config.CaCert)
 	if err != nil {
 		return err
@@ -59,7 +64,7 @@ func (c *sessionControlState) handleCircuitTermination(pkt *CircuitProbe, pr *ro
 	handler.SetPacketWriteChan(ch)
 	handler.circuit = circ
 
-	c.config.Log.Debug("Started circuit build")
+	c.config.Log.WithField("peer", remotePkh.MarshalHashIdentifier()).Debug("Built circuit")
 	return nil
 }
 
