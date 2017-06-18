@@ -117,7 +117,9 @@ func (cb *CircuitBuilder) BuilderWorker() error {
 // emitCircuitProbe transmits a new circuit probe.
 func (cb *CircuitBuilder) emitCircuitProbe() error {
 	probe := route.NewRoute()
-	probe.Destination = &identity.PeerIdentifier{MatchPublicKey: cb.peer.GetPartialHash()}
+	probe.Destination = &identity.PeerIdentifier{
+		MatchPublicKey: cb.peer.GetPartialHash(true),
+	}
 
 	return cb.peerDb.ForEachPeer(func(p *peer.Peer) (peerErr error) {
 		defer func() {
@@ -153,7 +155,7 @@ func (cb *CircuitBuilder) emitCircuitProbe() error {
 
 			hop := route.NewHop(
 				cb.localIdentity.Identity,
-				&identity.PeerIdentifier{MatchPublicKey: p.GetPartialHash()},
+				&identity.PeerIdentifier{MatchPublicKey: p.GetPartialHash(true)},
 			)
 			hop.ForwardInterface = netInterId
 			if err := probe.AddHop(hop, cb.localIdentity.GetPrivateKey()); err != nil {

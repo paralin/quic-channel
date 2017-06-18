@@ -99,7 +99,7 @@ func (p *ParsedRoute) DecodeHops(ca *x509.Certificate) (RouteHops, RouteHopIdent
 }
 
 // AddHop adds a hop to the route and cached hops list.
-func (p *ParsedRoute) AddHop(ca *x509.Certificate, hop *Route_Hop, pkey *rsa.PrivateKey) error {
+func (p *ParsedRoute) AddHop(ca *x509.Certificate, hop *Route_Hop, ident *identity.ParsedIdentity) error {
 	if p.routeHops == nil {
 		_, _, err := p.DecodeHops(ca)
 		if err != nil {
@@ -107,11 +107,12 @@ func (p *ParsedRoute) AddHop(ca *x509.Certificate, hop *Route_Hop, pkey *rsa.Pri
 		}
 	}
 
-	if err := p.Route.AddHop(hop, pkey); err != nil {
+	if err := p.Route.AddHop(hop, ident.GetPrivateKey()); err != nil {
 		return err
 	}
 
 	p.routeHops = append(p.routeHops, hop)
+	p.routeHopIdentities = append(p.routeHopIdentities, ident)
 	return nil
 }
 
@@ -259,11 +260,11 @@ func (hops RouteHops) Verify(
 		seenIdentities[hash] = true
 
 		// Check the next identity
-		nextIdent := hop.Next
-		if err := nextIdent.Verify(); err != nil {
-			return err
-		}
-		if len(hopIdentities) > i+1 {
+		if i != len(hops)-1 {
+			nextIdent := hop.Next
+			if err := nextIdent.Verify(); err != nil {
+				return err
+			}
 			knownNextIdent := hopIdentities[i+1]
 			if !nextIdent.MatchesIdentity(knownNextIdent) {
 				pkh, err := knownNextIdent.HashPublicKey()
@@ -360,5 +361,5 @@ func (r *Route) DecodeHops(caCert *x509.Certificate) (RouteHops, RouteHopIdentit
 		resultIdentities[i] = pident
 	}
 
-	return result, nil, nil
+	return result, resultIdentities, nil
 }

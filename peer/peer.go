@@ -96,9 +96,11 @@ func (p *Peer) GetIdentifier() string {
 }
 
 // GetPartialHash returns the peer's partial or full hash.
-func (p *Peer) GetPartialHash() []byte {
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
+func (p *Peer) GetPartialHash(noLock bool) []byte {
+	if !noLock {
+		p.mtx.Lock()
+		defer p.mtx.Unlock()
+	}
 
 	dat := make([]byte, len(p.publicKeyHash))
 	copy(dat, p.publicKeyHash)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"time"
 
 	pkt "github.com/fuserobotics/quic-channel/packet"
@@ -93,7 +92,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	var previousHopIdx int
 	if ourHopIdx > 0 && hops[ourHopIdx-1].Next.MatchesIdentity(h.config.LocalIdentity) {
 		previousHopIdx = ourHopIdx - 1
-	} else if ourHopIdx < len(hops)-1 && hops[ourHopIdx+1].Next.MatchesIdentity(h.config.LocalIdentity) {
+	} else if ourHopIdx < len(hops)-1 {
 		previousHopIdx = ourHopIdx + 1
 	} else {
 		return errors.New("Cannot find previous hop in the chain / determine direction.")
@@ -172,14 +171,8 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		pktWriteCh := make(chan []byte)
 		circ := newCircuit(
 			ctx,
-			&net.UDPAddr{
-				IP:   localAddr,
-				Port: int(h.config.Stream.StreamID()),
-			},
-			&net.UDPAddr{
-				IP:   peerAddr,
-				Port: 5,
-			},
+			localAddr,
+			peerAddr,
 			pktWriteCh,
 			est,
 		)

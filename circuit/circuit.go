@@ -33,13 +33,13 @@ type Circuit struct {
 func newCircuit(
 	ctx context.Context,
 	localAddr,
-	remoteAddr net.Addr,
+	remoteAddr net.IP,
 	packetWriteChan chan<- []byte,
 	routeEstablish *route.RouteEstablish,
 ) *Circuit {
 	c := &Circuit{
-		localAddr:       localAddr,
-		remoteAddr:      remoteAddr,
+		localAddr:       &net.UDPAddr{IP: localAddr, Port: 5},
+		remoteAddr:      &net.UDPAddr{IP: remoteAddr, Port: 5},
 		packetChan:      make(chan []byte),
 		packetWriteChan: packetWriteChan,
 		routeEstablish:  routeEstablish,
