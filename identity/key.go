@@ -86,6 +86,17 @@ func (h *PublicKeyHash) ToIPv6Addr(caCert *x509.Certificate) (net.IP, error) {
 	return ip, nil
 }
 
+// MatchesPartialHash checks if the partial hash matches this public key hash.
+func (h *PublicKeyHash) MatchesPartialHash(partialHash []byte) bool {
+	phl := len(partialHash)
+	hl := len(*h)
+	hlm := hl
+	if phl < hlm {
+		hlm = phl
+	}
+	return bytes.Compare((*h)[:hlm], partialHash[:hlm]) == 0
+}
+
 // HashCACertificate returns a CaCertHash for the purposes of IPv6 address generation.
 func HashCACertificate(caCert *x509.Certificate) (*ClusterCertHash, error) {
 	// Generate the subnet etc from the ca cert.

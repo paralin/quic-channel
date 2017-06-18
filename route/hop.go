@@ -10,9 +10,10 @@ import (
 var hopSignatureSaltLen int = 0
 
 // NewHop builds a new hop.
-func NewHop(ident *identity.Identity) *Route_Hop {
+func NewHop(ourIdent *identity.Identity, nextIdent *identity.PeerIdentifier) *Route_Hop {
 	return &Route_Hop{
-		Identity:  ident,
-		Timestamp: timestamp.Now(),
+		Identity:  ourIdent,
+		Next:      nextIdent,
+		Timestamp: timestamp.Now(), // overwritten later-
 	}
 }

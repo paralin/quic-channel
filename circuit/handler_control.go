@@ -48,7 +48,7 @@ func (h *controlStreamHandler) Handle(ctx context.Context) error {
 
 	for {
 		packet, err := config.PacketRw.ReadPacket(
-			pkt.PacketIdentifierFunc(PacketIdentifier.IdentifyPacket),
+			pkt.PacketIdentifierFunc(ControlPacketIdentifier.IdentifyPacket),
 		)
 		if err != nil {
 			return err

@@ -9,6 +9,12 @@ message SignedMessage {
   ESignedMessageHash hash_type = 4;
 }
 
+// DataHash is the hash of some data.
+message DataHash {
+  bytes hash = 1;
+  ESignedMessageHash hash_type = 2;
+}
+
 enum ESignedMessageHash {
   HASH_SHA256 = 0;
 }

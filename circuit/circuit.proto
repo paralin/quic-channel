@@ -7,14 +7,27 @@ import "github.com/fuserobotics/quic-channel/route/route.proto";
 enum EStreamType {
   // Control stream, used for control messages.
   STREAM_CONTROL = 0;
+  // Circuit stream, used for building circuits.
+  STREAM_CIRCUIT = 1;
 }
 
 // CircuitProbe is a probe to build a circuit.
+// control packet_type: 5
 message CircuitProbe {
   // Route contains the route so far.
   route.Route route = 1;
 }
 
-// CircuitProbeRequest is the information about the CircuitProbe.
-message CircuitProbeRequest {
+// CircuitInit is the first message on the circuit stream.
+// circuit packet_type: 1
+message CircuitInit {
+  // RouteEstablish is the route establish chain.
+  route.RouteEstablish route_establish = 1;
+}
+
+// CircuitPacket is a packet sent over the circuit.
+// circuit packet_type 2
+message CircuitPacket {
+  // PacketData is the data in the packet.
+  bytes packet_data = 1;
 }

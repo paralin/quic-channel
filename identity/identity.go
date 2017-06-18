@@ -53,6 +53,21 @@ func (i *ParsedIdentity) verifyPrivateKey() error {
 	return nil
 }
 
+// CompareTo sees if two parsed identities are equivilent.
+func (i *ParsedIdentity) CompareTo(other *ParsedIdentity) bool {
+	pkh, err := i.HashPublicKey()
+	if err != nil {
+		return false
+	}
+
+	opkh, err := other.HashPublicKey()
+	if err != nil {
+		return false
+	}
+
+	return opkh.MatchesPartialHash((*pkh)[:])
+}
+
 // SetPrivateKey sets the private key of this identity.
 func (i *ParsedIdentity) SetPrivateKey(key *rsa.PrivateKey) (err error) {
 	i.privateKey = key

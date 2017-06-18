@@ -4,9 +4,6 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
-	"fmt"
-	"hash"
 
 	"github.com/golang/protobuf/proto"
 )
@@ -90,14 +87,4 @@ func (m *SignedMessage) Sign(privateKey *rsa.PrivateKey) error {
 	}
 	m.Signature = sig
 	return nil
-}
-
-// HashData uses a hash type to hash a message.
-func LookupHashFunction(hashType ESignedMessageHash) (hash.Hash, crypto.Hash, error) {
-	switch hashType {
-	case ESignedMessageHash_HASH_SHA256:
-		return sha256.New(), crypto.SHA256, nil
-	default:
-		return nil, crypto.Hash(0), fmt.Errorf("Unknown hash kind %s\n", hashType.String())
-	}
 }

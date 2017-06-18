@@ -6,3 +6,9 @@ message Identity {
   // CertAsn1 contains each certificate in the chain, with the first certificate as the leaf.
   repeated bytes cert_asn1 = 1;
 }
+
+// PeerIdentifier is an encoded and potentially partial match against a peer public key.
+message PeerIdentifier {
+  // Match by public key hash. Partials are accepted, with a minimum length.
+  bytes match_public_key = 1;
+}

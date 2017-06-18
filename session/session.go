@@ -168,8 +168,11 @@ func (s *Session) GetOrPutData(id uint32, builder func() interface{}) interface{
 	defer s.sessionDataMtx.Unlock()
 
 	data, ok := s.sessionData[id]
-	if !ok {
+	if !ok && builder != nil {
 		data = builder()
+		if data == nil {
+			return nil
+		}
 		s.sessionData[id] = data
 	}
 	return data

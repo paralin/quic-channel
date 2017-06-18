@@ -10,7 +10,7 @@ message Route {
   repeated signature.SignedMessage hop = 1;
   // Destination is the destination of the route.
   // Source can be inferred from the first hop.
-  Destination destination = 2;
+  identity.PeerIdentifier destination = 2;
 
   // Hop is a hop in the probe route.
   message Hop {
@@ -22,11 +22,18 @@ message Route {
     uint32 forward_interface = 3;
     // Timestamp is the time the route probe was processed.
     uint64 timestamp = 4;
+    // SegmentHash is the hash of the route segments before this hop.
+    signature.DataHash segment_hash = 5;
+    // Next is the identifier for the next peer.
+    identity.PeerIdentifier next = 6;
   }
+}
 
-  // Destination is the destination of the route.
-  message Destination {
-    // Match by public key hash. Partials are accepted, with a minimum length.
-    bytes match_public_key = 1;
-  }
+// RouteEstablish is a agreement of a route by all peers.
+message RouteEstablish {
+  // Route is the encoded complete route.
+  bytes route = 1;
+  // Route signatures, in order of destination -> source.
+  // The message field will be empty, should be filled from the ..route field.
+  repeated signature.SignedMessage route_signatures = 2;
 }

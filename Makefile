@@ -1,5 +1,6 @@
 PACKAGE_PATH="github.com/fuserobotics/quic-channel"
 
+all: gengo
 gengo:
 	protowrap -I $${GOPATH}/src \
 		--go_out=plugins=grpc:$${GOPATH}/src \

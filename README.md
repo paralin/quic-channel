@@ -101,6 +101,25 @@ In the code we have the control scheme:
  - The **Channel** type manages multiplexing a buffered read/writer over the available circuits to a peer.
  - The **Circuit** is instantiated when a **Circuit Probe** comes back with a valid remote circuit.
 
+The implementation of the circuit builder:
+
+ - Track opened circuits. If there are none of good enough metric, emit route build requests.
+ - Emit these requests periodically, with a random period of 25s<->40s.
+ - When a circuit is opened to the local host, the circuit builder handles it.
+
+There are two kinds of routes we can store in memory and attempt to re-use later (and maybe swap to disk):
+
+ - **route.Route**: a complete route with us as the destination. Emit a CircuitInit with a empty RouteEstablish to use.
+ - **route.RouteEstablish**: a complete RouteEstablish with us as the originator.
+
+When negotiating a new circuit, if the destination detects the originator used a new RouteEstablish, it will pack the complete RouteEstablish into a message and send it down the circuit back to the originator.
+
+Important optimization to make this low-latency:
+
+ - Keep in memory the route probes we've witnessed in the last minute (?)
+ - When a new peer over an unseen interface is opened, re-emit the route builds through immediately.
+ - This will reduce the latency of new routes being found in changing environments.
+
 The implementation of a channel / circuit:
 
  - Implement net.PacketConn over the circuit.

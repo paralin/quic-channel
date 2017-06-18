@@ -19,13 +19,19 @@ func (p *KeepAlive) GetPacketType() packet.PacketType {
 	return 4
 }
 
+// PacketType returns the packet type of the stream init packet.
+func (p *CircuitProbe) GetPacketType() packet.PacketType {
+	return 5
+}
+
 // ControlPacketIdentifier identifies Control packets.
-var PacketIdentifier = packet.NewPacketIdentifier()
+var ControlPacketIdentifier = packet.NewPacketIdentifier()
 
 func init() {
-	PacketIdentifier.AddPacketType(
+	ControlPacketIdentifier.AddPacketType(
 		func() packet.Packet { return &SessionInitChallenge{} },
 		func() packet.Packet { return &SessionInitResponse{} },
 		func() packet.Packet { return &KeepAlive{} },
+		func() packet.Packet { return &CircuitProbe{} },
 	)
 }

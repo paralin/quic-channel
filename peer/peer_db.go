@@ -36,6 +36,26 @@ func NewPeerDatabase() *PeerDatabase {
 	return d
 }
 
+// ForEachPeer iterates over the peer database.
+func (d *PeerDatabase) ForEachPeer(cb func(peer *Peer) error) error {
+	d.mtx.Lock()
+	defer d.mtx.Unlock()
+
+	for _, peer := range d.identifiedPeers {
+		if err := cb(peer); err != nil {
+			return err
+		}
+	}
+
+	for _, peer := range d.ephemeralPeers {
+		if err := cb(peer); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // ByPartialHash looks up a peer given a partial hash or full hash.
 // If the peer doesn't already exist, it creates it.
 // The partial hash length must be greater than 10.

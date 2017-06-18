@@ -38,6 +38,12 @@ type NodeListenConfig struct {
 	DiscoveryConfigs []interface{}
 }
 
+// circuitBuilderWrapper wraps a CircuitBuilder with a cancellation
+type circuitBuilderWrapper struct {
+	builder *circuit.CircuitBuilder
+	cancel  context.CancelFunc
+}
+
 // Node manages sessions with peers.
 type Node struct {
 	config             NodeConfig
@@ -48,6 +54,7 @@ type Node struct {
 	discovery          *discovery.Discovery
 	localIdentity      *identity.ParsedIdentity
 	peerDb             *peer.PeerDatabase
+	circuitBuilders    map[*peer.Peer]*circuitBuilderWrapper
 }
 
 // ListenAddr tries to start listening on a port and starts discovery.
@@ -57,7 +64,12 @@ func (n *Node) ListenAddr(lc *NodeListenConfig) error {
 	}
 
 	// start listeners
-	listener, err := quic.ListenAddr(fmt.Sprintf(":%d", lc.Port), &quic.Config{TLSConfig: n.config.TLSConfig})
+	listener, err := quic.ListenAddr(
+		fmt.Sprintf(":%d", lc.Port),
+		&quic.Config{
+			TLSConfig: n.config.TLSConfig,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -85,9 +97,14 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 		return nil, errors.New("NodeConfig, TLSConfig must be specified.")
 	}
 
-	nod = &Node{config: *nc, peerDb: peer.NewPeerDatabase()}
+	nod = &Node{
+		config:          *nc,
+		peerDb:          peer.NewPeerDatabase(),
+		circuitBuilders: make(map[*peer.Peer]*circuitBuilderWrapper),
+	}
 	nod.sessionHandler.Node = nod
 	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
+	nod.childContext = context.WithValue(nod.childContext, "peerdb", nod.peerDb)
 
 	// build identity
 	var err error
@@ -169,6 +186,39 @@ func (n *Node) HandleSession(sess quic.Session, initiator bool) error {
 	}
 
 	return err
+}
+
+// BuildCircuit instantiates a CircuitBuilder for the peer.
+func (n *Node) BuildCircuit(peerId *identity.PeerIdentifier) error {
+	if err := peerId.Verify(); err != nil {
+		return err
+	}
+
+	peer, err := n.peerDb.ByPartialHash(peerId.MatchPublicKey)
+	if err != nil {
+		return err
+	}
+
+	builderWrapper := n.circuitBuilders[peer]
+	if builderWrapper == nil {
+		ctx, ctxCancel := context.WithCancel(n.childContext)
+		builderWrapper = &circuitBuilderWrapper{
+			builder: circuit.NewCircuitBuilder(ctx, peer, n.peerDb, n.localIdentity),
+			cancel:  ctxCancel,
+		}
+		n.circuitBuilders[peer] = builderWrapper
+		go func() {
+			err := builderWrapper.builder.BuilderWorker()
+			ctxCancel()
+			delete(n.circuitBuilders, peer)
+			if err != nil {
+				log.WithError(err).Warn("Circuit builder errored")
+			}
+		}()
+	}
+
+	// builder := builderWrapper.builder
+	return nil
 }
 
 // listenPump listens for incoming sessions.

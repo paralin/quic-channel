@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/session"
 )
@@ -94,6 +95,16 @@ func (p *Peer) GetIdentifier() string {
 	return (&pkPartial).MarshalHashIdentifier()
 }
 
+// GetPartialHash returns the peer's partial or full hash.
+func (p *Peer) GetPartialHash() []byte {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	dat := make([]byte, len(p.publicKeyHash))
+	copy(dat, p.publicKeyHash)
+	return dat
+}
+
 // MatchesPartialHash checks if this peer is potentially the peer for partialHash.
 func (p *Peer) MatchesPartialHash(partialHash []byte) bool {
 	p.mtx.Lock()
@@ -130,6 +141,7 @@ func (p *Peer) AddSession(sess *session.Session) {
 
 	sess.AddCloseCallback(p.RemoveSession)
 	p.circuitSessions = append(p.circuitSessions, sess)
+	go func() { log.WithField("peer", p.GetIdentifier()).Debug("Added session") }()
 }
 
 // RemoveSession removes a session from the peer. Err parameter is ignored.
