@@ -24,6 +24,16 @@ func (p *CircuitProbe) GetPacketType() packet.PacketType {
 	return 5
 }
 
+// PacketType returns the packet type of the stream init packet.
+func (p *CircuitPeerLookupRequest) GetPacketType() packet.PacketType {
+	return 6
+}
+
+// PacketType returns the packet type of the stream init packet.
+func (p *CircuitPeerLookupResponse) GetPacketType() packet.PacketType {
+	return 7
+}
+
 // ControlPacketIdentifier identifies Control packets.
 var ControlPacketIdentifier = packet.NewPacketIdentifier()
 
@@ -33,5 +43,7 @@ func init() {
 		func() packet.Packet { return &SessionInitResponse{} },
 		func() packet.Packet { return &KeepAlive{} },
 		func() packet.Packet { return &CircuitProbe{} },
+		func() packet.Packet { return &CircuitPeerLookupRequest{} },
+		func() packet.Packet { return &CircuitPeerLookupResponse{} },
 	)
 }

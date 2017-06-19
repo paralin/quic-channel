@@ -17,9 +17,15 @@ func (i *CircuitPacket) GetPacketType() packet.PacketType {
 	return 2
 }
 
+// PacketType returns the packet type of the stream init packet.
+func (i *CircuitEstablished) GetPacketType() packet.PacketType {
+	return 3
+}
+
 func init() {
 	CircuitPacketIdentifier.AddPacketType(
 		func() packet.Packet { return &CircuitInit{} },
+		func() packet.Packet { return &CircuitEstablished{} },
 		func() packet.Packet { return &CircuitPacket{} },
 	)
 }

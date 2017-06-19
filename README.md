@@ -212,3 +212,11 @@ as Serf - in particular:
    build network coordinates in the same way as Serf.
  - **Gossip**: Serf's gossip features can easily be added to QC with a
    control packets over the control stream.
+
+## Relay Identity Optimization
+
+Originally, the `identity.Identity` for each hop was included in the `route.Hop`.
+
+This makes the packet size for a route probe explode as the hops travel outwards.
+
+Instead, a better approach is to include just the partial hash (10 bytes). If the next hop in the route does not have the peer in its PeerDb, then it will add to the PeerDb a temporary (maybe with some kind of ephemeral peer sweep in place in the future) peer entry and ping a `PeerQuery` control packet backwards to the transmitting peer over the same session.

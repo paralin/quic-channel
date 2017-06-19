@@ -10,10 +10,17 @@ import (
 var hopSignatureSaltLen int = 0
 
 // NewHop builds a new hop.
-func NewHop(ourIdent *identity.Identity, nextIdent *identity.PeerIdentifier) *Route_Hop {
+func NewHop(nextIdent *identity.PeerIdentifier) *Route_Hop {
 	return &Route_Hop{
-		Identity:  ourIdent,
 		Next:      nextIdent,
 		Timestamp: timestamp.Now(), // overwritten later-
 	}
+}
+
+// CompareTo checks if two Hop are equiv.
+func (h *Route_Hop) CompareTo(other *Route_Hop) bool {
+	return h.Identity.CompareTo(other.Identity) &&
+		h.Next.CompareTo(other.Next) &&
+		h.ForwardInterface == other.ForwardInterface &&
+		h.BackwardInterface == other.BackwardInterface
 }

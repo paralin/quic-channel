@@ -15,7 +15,7 @@ message Route {
   // Hop is a hop in the probe route.
   message Hop {
     // Identity contains the identity of the peer.
-    identity.Identity identity = 1;
+    identity.PeerIdentifier identity = 1;
     // BackwardInterface is the interface in the direction of the originator, used for session routing.
     uint32 backward_interface = 2;
     // ForwardInterface is the interface in the direction of the destination, used for verification.

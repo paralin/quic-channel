@@ -9,16 +9,21 @@ import (
 	"sync"
 	"time"
 
+	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/network"
+	"github.com/fuserobotics/quic-channel/peer"
 	"github.com/fuserobotics/quic-channel/route"
 )
 
 // Circuit manages state for a multi-hop connection.
 // It also implements net.PacketConn.
 type Circuit struct {
-	ctx        context.Context
-	ctxCancel  context.CancelFunc
-	localAddr  net.Addr
-	remoteAddr net.Addr
+	ctx           context.Context
+	ctxCancel     context.CancelFunc
+	localAddr     net.Addr
+	remoteAddr    net.Addr
+	peer          *peer.Peer
+	outgoingInter *network.NetworkInterface
 
 	deadlineMtx    sync.Mutex
 	readDeadline   time.Time
@@ -32,20 +37,37 @@ type Circuit struct {
 // newCircuit builds the base circuit object.
 func newCircuit(
 	ctx context.Context,
+	peer *peer.Peer,
 	localAddr,
 	remoteAddr net.IP,
 	packetWriteChan chan<- []byte,
 	routeEstablish *route.RouteEstablish,
+	outgoingInter *network.NetworkInterface,
 ) *Circuit {
 	c := &Circuit{
+		peer:            peer,
 		localAddr:       &net.UDPAddr{IP: localAddr, Port: 5},
 		remoteAddr:      &net.UDPAddr{IP: remoteAddr, Port: 5},
 		packetChan:      make(chan []byte),
 		packetWriteChan: packetWriteChan,
 		routeEstablish:  routeEstablish,
+		outgoingInter:   outgoingInter,
 	}
 	c.ctx, c.ctxCancel = context.WithCancel(ctx)
+	go c.OnDone(func(c *Circuit) {
+		log.WithField("peer", c.peer.GetIdentifier()).Debug("Circuit closed")
+	})
 	return c
+}
+
+// GetOutgoingInterface returns the interface this circuit is attached to.
+func (c *Circuit) GetOutgoingInterface() *network.NetworkInterface {
+	return c.outgoingInter
+}
+
+// GetPeer gets the circuit peer.
+func (c *Circuit) GetPeer() *peer.Peer {
+	return c.peer
 }
 
 // handlePacket handles a packet.
@@ -61,6 +83,12 @@ func (c *Circuit) handlePacket(packet []byte) error {
 // LocalAddr returns the local network address.
 func (c *Circuit) LocalAddr() net.Addr {
 	return c.localAddr
+}
+
+// OnDone waits for the circuit to exit, then calls a func.
+func (c *Circuit) OnDone(cb func(c *Circuit)) {
+	<-c.ctx.Done()
+	cb(c)
 }
 
 // ReadFrom reads a packet from the connection,

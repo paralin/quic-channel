@@ -220,7 +220,7 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 		return nil, err
 	}
 
-	go s.runStreamHandler(streamId, handler)
+	go s.runStreamHandler(handler, stream)
 
 	l.Debug("Stream initialized")
 	return handler, nil
@@ -270,13 +270,14 @@ func (s *Session) handleIncomingStream(stream quic.Stream) error {
 	}
 
 	l.WithField("streamType", si.StreamType).Debug("Stream initialized")
-	go s.runStreamHandler(stream.StreamID(), handler)
+	go s.runStreamHandler(handler, stream)
 
 	return nil
 }
 
 // runStreamHandler manages a stream handler.
-func (s *Session) runStreamHandler(id protocol.StreamID, handler StreamHandler) {
+func (s *Session) runStreamHandler(handler StreamHandler, stream quic.Stream) {
+	id := stream.StreamID()
 	s.streamHandlersMtx.Lock()
 	s.streamHandlers[id] = handler
 	s.streamHandlersMtx.Unlock()
@@ -295,6 +296,8 @@ func (s *Session) runStreamHandler(id protocol.StreamID, handler StreamHandler) 
 	s.streamHandlersMtx.Lock()
 	delete(s.streamHandlers, id)
 	s.streamHandlersMtx.Unlock()
+
+	stream.Close()
 }
 
 // StartPump starts a goroutine that will end the session if returned.

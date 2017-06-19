@@ -17,8 +17,7 @@ import (
 type ParsedRoute struct {
 	*Route
 
-	routeHops          RouteHops
-	routeHopIdentities RouteHopIdentities
+	routeHops RouteHops
 }
 
 // NewParsedRoute builds a new ParsedRoute.
@@ -35,13 +34,12 @@ func BuildParsedRoute(route *Route) *ParsedRoute {
 // Reset resets the route.
 func (p *ParsedRoute) Reset() {
 	p.routeHops = nil
-	p.routeHopIdentities = nil
 	p.Route.Reset()
 }
 
 // Verify attempts to parse and verify the entire route.
-func (p *ParsedRoute) Verify(ca *x509.Certificate) error {
-	hops, hopIdentities, err := p.DecodeHops(ca)
+func (p *ParsedRoute) Verify(ca *x509.Certificate, hopIdentities RouteHopIdentities) error {
+	hops, err := p.DecodeHops(ca)
 	if err != nil {
 		return err
 	}
@@ -69,42 +67,41 @@ func (p *ParsedRoute) PopHop() {
 	if p.routeHops != nil {
 		p.routeHops = p.routeHops[:len(p.routeHops)-1]
 	}
-	if p.routeHopIdentities != nil {
-		p.routeHopIdentities = p.routeHopIdentities[:len(p.routeHopIdentities)-1]
-	}
 	p.Route.PopHop()
 }
 
 // DecodeHops returns the parsed list of hops and caches it for future use.
-func (p *ParsedRoute) DecodeHops(ca *x509.Certificate) (RouteHops, RouteHopIdentities, error) {
+func (p *ParsedRoute) DecodeHops(ca *x509.Certificate) (RouteHops, error) {
 	if p.routeHops != nil {
-		return p.routeHops, p.routeHopIdentities, nil
+		return p.routeHops, nil
 	}
 
-	hops, idents, err := p.Route.DecodeHops(ca)
+	hops, err := p.Route.DecodeHops(ca)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if hops == nil {
 		hops = RouteHops{}
 	}
-	if idents == nil {
-		idents = RouteHopIdentities{}
-	}
 
 	p.routeHops = hops
-	p.routeHopIdentities = idents
-	return hops, idents, nil
+	return hops, nil
 }
 
 // AddHop adds a hop to the route and cached hops list.
 func (p *ParsedRoute) AddHop(ca *x509.Certificate, hop *Route_Hop, ident *identity.ParsedIdentity) error {
 	if p.routeHops == nil {
-		_, _, err := p.DecodeHops(ca)
+		_, err := p.DecodeHops(ca)
 		if err != nil {
 			return err
 		}
+	}
+
+	var err error
+	hop.Identity, err = ident.ToPartialPeerIdentifier()
+	if err != nil {
+		return err
 	}
 
 	if err := p.Route.AddHop(hop, ident.GetPrivateKey()); err != nil {
@@ -112,20 +109,7 @@ func (p *ParsedRoute) AddHop(ca *x509.Certificate, hop *Route_Hop, ident *identi
 	}
 
 	p.routeHops = append(p.routeHops, hop)
-	p.routeHopIdentities = append(p.routeHopIdentities, ident)
 	return nil
-}
-
-func (r *ParsedRoute) SummaryShort(ca *x509.Certificate) (string, error) {
-	if len(r.Hop) == 0 {
-		return "Route is empty", nil
-	}
-
-	_, hopIdentities, err := r.DecodeHops(ca)
-	if err != nil {
-		return "", err
-	}
-	return hopIdentities.SummaryShort(ca)
 }
 
 // CompareTo checks if two routes are equiv.
@@ -138,18 +122,18 @@ func (r *ParsedRoute) CompareTo(ca *x509.Certificate, other *ParsedRoute) bool {
 		return false
 	}
 
-	_, rHopIds, err := r.DecodeHops(ca)
+	otherHops, err := r.DecodeHops(ca)
 	if err != nil {
 		return false
 	}
 
-	_, orHopIds, err := other.DecodeHops(ca)
+	hops, err := other.DecodeHops(ca)
 	if err != nil {
 		return false
 	}
 
-	for i, hop := range rHopIds {
-		otherHop := orHopIds[i]
+	for i, hop := range hops {
+		otherHop := otherHops[i]
 
 		if !hop.CompareTo(otherHop) {
 			return false
@@ -161,13 +145,13 @@ func (r *ParsedRoute) CompareTo(ca *x509.Certificate, other *ParsedRoute) bool {
 
 // IsComplete checks if the route goes from source to destination.
 func (r *ParsedRoute) IsComplete(ca *x509.Certificate) bool {
-	_, hopIds, err := r.DecodeHops(ca)
-	if err != nil || len(hopIds) == 0 {
+	hops, err := r.DecodeHops(ca)
+	if err != nil || len(hops) == 0 {
 		return false
 	}
 
-	lastHop := hopIds[len(hopIds)-1]
-	return r.Destination.MatchesIdentity(lastHop)
+	lastHop := hops[len(hops)-1]
+	return lastHop.Identity.CompareTo(r.Destination)
 }
 
 // RouteHops is a set of Route_Hop
@@ -340,26 +324,23 @@ func (r *Route) AddHop(hop *Route_Hop, pkey *rsa.PrivateKey) error {
 	return nil
 }
 
-// DecodeHops decodes and verifies the encoded hops array and signatures.
-func (r *Route) DecodeHops(caCert *x509.Certificate) (RouteHops, RouteHopIdentities, error) {
+// DecodeHops decodes the encoded hops array.
+func (r *Route) DecodeHops(caCert *x509.Certificate) (RouteHops, error) {
 	result := make(RouteHops, len(r.Hop))
-	resultIdentities := make(RouteHopIdentities, len(r.Hop))
 
 	for i, bin := range r.Hop {
 		h := &Route_Hop{}
 		if err := proto.Unmarshal(bin.Message, h); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if h.Identity == nil {
-			return nil, nil, errors.New("Hop must have an identity assigned.")
+			return nil, errors.New("Hop must have an identity assigned.")
 		}
-		pident := identity.NewParsedIdentity(h.Identity)
-		if err := pident.VerifyMessage(caCert, bin); err != nil {
-			return nil, nil, err
+		if err := h.Identity.Verify(); err != nil {
+			return nil, err
 		}
 		result[i] = h
-		resultIdentities[i] = pident
 	}
 
-	return result, resultIdentities, nil
+	return result, nil
 }

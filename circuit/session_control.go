@@ -35,6 +35,10 @@ type sessionControlState struct {
 
 	activePacketHandler func(pkt packet.Packet) error
 	challengeNonce      []byte
+
+	pendingPeerBouncesMtx sync.Mutex
+	pendingPeerBouncesCtr int
+	pendingPeerBounces    map[uint32]*pendingCircuitIdentityLookup
 }
 
 // newSessionControlState builds a new control state.
@@ -43,9 +47,10 @@ func newSessionControlState(
 	config *session.StreamHandlerConfig,
 ) *sessionControlState {
 	s := &sessionControlState{
-		context: ctx,
-		config:  config,
-		packets: make(chan packet.Packet, 5),
+		context:            ctx,
+		config:             config,
+		packets:            make(chan packet.Packet, 5),
+		pendingPeerBounces: make(map[uint32]*pendingCircuitIdentityLookup),
 	}
 	if config.Session.IsInitiator() {
 		s.activePacketHandler = s.handleForwardHandshakeInitiator
@@ -98,6 +103,83 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 		c.config.Session.ResetInactivityTimeout(inactivityTimeout)
 	case *CircuitProbe:
 		return c.handleCircuitProbe(pkt)
+	case *CircuitPeerLookupResponse:
+		fmt.Printf("Got lookup response %#v\n", *pkt)
+		nonce := pkt.QueryNonce
+		pend := c.pendingPeerBounces[nonce]
+		if pend == nil {
+			return errors.New("Received peer lookup response after request had timed out.")
+		}
+		pend.timeoutCancel()
+		c.pendingPeerBouncesMtx.Lock()
+		delete(c.pendingPeerBounces, pend.nonce)
+		c.pendingPeerBouncesMtx.Unlock()
+
+		nextPeers := pkt.RequestedPeer
+		for i, peer := range pend.hopIdents {
+			if peer == nil {
+				hopIdent := pend.hops[i].Identity
+				if len(nextPeers) == 0 {
+					return fmt.Errorf("Asked for identity for peer %s but didn't get it.", hopIdent.MarshalHashIdentifier())
+				}
+
+				np := nextPeers[0]
+				nextPeers = nextPeers[1:]
+
+				parsedIdent := identity.NewParsedIdentity(np)
+				parsedIdentPkh, err := parsedIdent.HashPublicKey()
+				if err != nil {
+					return err
+				}
+
+				if !hopIdent.MatchesIdentity(parsedIdent) {
+					return fmt.Errorf(
+						"Asked for peer %s but got peer %s (result potentially out of order)",
+						hopIdent.MarshalHashIdentifier(),
+						parsedIdentPkh.MarshalHashIdentifier(),
+					)
+				}
+				pend.hopIdents[i] = parsedIdent
+			}
+		}
+
+		if err := c.finalizeCircuitProbe(pend); err != nil {
+			return err
+		}
+	case *CircuitPeerLookupRequest:
+		fmt.Printf("Got lookup request %#v\n", *pkt)
+		nonce := pkt.QueryNonce
+		reqPeers := pkt.RequestedPeer
+		var result []*identity.Identity
+		peerDb, err := peerDbFromContext(c.context)
+		if err != nil {
+			return err
+		}
+
+		for _, peer := range reqPeers {
+			if err := peer.Verify(); err != nil {
+				return err
+			}
+
+			np, err := peerDb.ByPartialHash(peer.MatchPublicKey)
+			if err != nil {
+				return err
+			}
+			if !np.IsIdentified() {
+				return fmt.Errorf("Unknown peer: %s", peer.MarshalHashIdentifier())
+			}
+			result = append(result, np.GetIdentity().Identity)
+		}
+		response := &CircuitPeerLookupResponse{
+			QueryNonce:    nonce,
+			RequestedPeer: result,
+		}
+		fmt.Printf("Sending lookup response %#v\n", *response)
+		err = c.config.PacketRw.WritePacket(response)
+		if err != nil {
+			return err
+		}
+		break
 	default:
 		c.config.Log.Warnf("Unhandled packet: %#v\n", pkt)
 	}

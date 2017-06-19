@@ -68,12 +68,19 @@ func (d *PeerDatabase) ByPartialHash(partialHash []byte) (*Peer, error) {
 
 	d.mtx.Lock()
 	defer d.mtx.Unlock()
+
 	if phl == sha256.Size {
 		var pkh identity.PublicKeyHash
 		copy(pkh[:], partialHash)
 		p, ok := d.identifiedPeers[pkh]
 		if ok {
 			return p, nil
+		}
+	}
+
+	for _, peer := range d.identifiedPeers {
+		if peer.MatchesPartialHash(partialHash) {
+			return peer, nil
 		}
 	}
 

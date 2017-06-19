@@ -5,22 +5,19 @@ import (
 	"crypto/x509"
 	"errors"
 
+	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/signature"
 	"github.com/golang/protobuf/proto"
 )
 
-// ParseVerifyRoute parses and verifies the route.
-func (e *RouteEstablish) ParseVerifyRoute(ca *x509.Certificate) (*ParsedRoute, error) {
+// ParseRoute parses the route.
+func (e *RouteEstablish) ParseRoute(ca *x509.Certificate) (*ParsedRoute, error) {
 	ro := &Route{}
 	if err := proto.Unmarshal(e.Route, ro); err != nil {
 		return nil, err
 	}
 
 	pr := BuildParsedRoute(ro)
-	if err := pr.Verify(ca); err != nil {
-		return nil, err
-	}
-
 	if !pr.IsComplete(ca) {
 		return nil, errors.New("Cannot RouteEstablish without a complete route.")
 	}
@@ -29,25 +26,36 @@ func (e *RouteEstablish) ParseVerifyRoute(ca *x509.Certificate) (*ParsedRoute, e
 }
 
 // VerifySignatures checks the signatures. Returns true/false complete and error
-func (e *RouteEstablish) VerifySignatures(ca *x509.Certificate, pr *ParsedRoute) (bool, error) {
-	_, hopIdentities, err := pr.DecodeHops(ca)
+func (e *RouteEstablish) VerifySignatures(
+	ca *x509.Certificate,
+	pr *ParsedRoute,
+	identityLookup func(peerId *identity.PeerIdentifier) (*identity.ParsedIdentity, error),
+) (bool, error) {
+	hops, err := pr.DecodeHops(ca)
 	if err != nil {
 		return false, err
 	}
-	if len(e.RouteSignatures) > len(hopIdentities) {
+	if len(e.RouteSignatures) > len(hops) {
 		return false, errors.New("There cannot be more signatures than hops.")
 	}
 
-	for i, sig := range e.RouteSignatures {
-		hopIdent := hopIdentities[len(hopIdentities)-1-i]
+	for i, hop := range hops[len(hops)-len(e.RouteSignatures):] {
+		sig := e.RouteSignatures[len(e.RouteSignatures)-1-i]
+		ident, err := identityLookup(hop.Identity)
+		if err != nil {
+			return false, err
+		}
+		if ident == nil {
+			continue
+		}
 		sig.Message = e.Route
 		defer func() { sig.Message = nil }()
-		if err := hopIdent.VerifyMessage(ca, sig); err != nil {
+		if err := ident.VerifyMessage(ca, sig); err != nil {
 			return false, err
 		}
 	}
 
-	return len(e.RouteSignatures) == len(hopIdentities), nil
+	return len(e.RouteSignatures) == len(hops), nil
 }
 
 // SignRoute signs the route and adds the signature to the RouteEstablish.

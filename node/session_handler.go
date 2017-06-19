@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/circuit"
 	"github.com/fuserobotics/quic-channel/session"
 )
 
@@ -40,34 +41,21 @@ func (h *nodeSessionHandler) OnSessionReady(details *session.SessionReadyDetails
 		WithField("addr", details.Session.GetRemoteAddr().String()).
 		WithField("iface", ni.Name).Debug("Interface determined")
 
-	niid := ni.Identifier()
-	sessionSt := details.InitiatedTimestamp
-
-	err = peer.ForEachCircuitSession(func(sess *session.Session) error {
-		ini := sess.GetInterface()
-		if ini == nil {
-			return nil
-		}
-		iid := ini.Identifier()
-		if iid == niid {
-			st := sess.GetStartTime()
-			userp := errors.New("Session userped by newer session")
-			if st.Before(sessionSt) {
-				sess.CloseWithErr(userp)
-			} else {
-				return userp
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	peer.AddSession(details.Session)
-	return nil
+	return peer.AddSession(details.Session)
 }
 
 // OnSessionClosed is called when a session is closed.
 func (h *nodeSessionHandler) OnSessionClosed(sess *session.Session, err error) {
+}
+
+// CircuitBuilt is called when a circuit is built.
+func (h *nodeSessionHandler) CircuitBuilt(c *circuit.Circuit) error {
+	peer := c.GetPeer()
+	if peer == nil {
+		return errors.New("Circuit peer was nil.")
+	}
+
+	builder := h.getCircuitBuilderForPeer(peer)
+	builder.builder.AddCircuit(c)
+	return nil
 }

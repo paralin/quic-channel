@@ -1,7 +1,9 @@
 package circuit
 
 import (
+	"context"
 	"errors"
+	"time"
 
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/peer"
@@ -10,112 +12,133 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-// handleCircuitTermination handles a circuit probe reaching us.
-func (c *sessionControlState) handleCircuitTermination(pkt *CircuitProbe, pr *route.ParsedRoute) error {
-	localAddr, err := c.config.LocalIdentity.ToIPv6Addr(c.config.CaCert)
-	if err != nil {
-		return err
+// pendingCircuitIdentityLookupTimeout is the time we will wait for peer identities before giving up.
+var pendingCircuitIdentityLookupTimeout time.Duration = time.Duration(10) * time.Second
+
+// pendingCircuitIdentityLookup is a circuit waiting for identity responses.
+type pendingCircuitIdentityLookup struct {
+	nonce         uint32
+	pkt           *CircuitProbe
+	timeoutCancel context.CancelFunc
+	parsedRoute   *route.ParsedRoute
+	hopIdents     route.RouteHopIdentities
+	hops          route.RouteHops
+}
+
+// peerDbFromContext gets the peerdb from Context
+func peerDbFromContext(c context.Context) (*peer.PeerDatabase, error) {
+	peerDbInter := c.Value("peerdb")
+	if peerDbInter == nil {
+		return nil, errors.New("Peer db not found in Context.")
 	}
-
-	_, hopIdents, err := pr.DecodeHops(c.config.CaCert)
-	if err != nil {
-		return err
-	}
-
-	remotePkh, err := hopIdents[0].HashPublicKey()
-	if err != nil {
-		return err
-	}
-
-	remoteAddr, err := hopIdents[0].ToIPv6Addr(c.config.CaCert)
-	if err != nil {
-		return err
-	}
-
-	routeData, err := proto.Marshal(pkt.Route)
-	if err != nil {
-		return err
-	}
-
-	est := &route.RouteEstablish{Route: routeData}
-	if err := est.SignRoute(c.config.LocalIdentity.GetPrivateKey()); err != nil {
-		return err
-	}
-
-	ch := make(chan []byte)
-	circ := newCircuit(
-		c.context,
-		localAddr,
-		remoteAddr,
-		ch,
-		est,
-	)
-
-	circuitStream, err := c.config.Session.OpenStream(session.StreamType(EStreamType_STREAM_CIRCUIT))
-	if err != nil {
-		return err
-	}
-
-	// todo: close circuitstream here if necessary
-	handler := circuitStream.(*circuitStreamHandler)
-	if err := handler.config.PacketRw.WritePacket(&CircuitInit{RouteEstablish: est}); err != nil {
-		return err
-	}
-	handler.SetPacketWriteChan(ch)
-	handler.circuit = circ
-
-	c.config.Log.WithField("peer", remotePkh.MarshalHashIdentifier()).Debug("Built circuit")
-	return nil
+	return peerDbInter.(*peer.PeerDatabase), nil
 }
 
 // handleRouteProbe handles incoming route probes from peers.
 func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
-	l := c.config.Log
-
 	if pkt.Route == nil {
 		return errors.New("Circuit probe route was empty.")
 	}
 
 	pr := route.BuildParsedRoute(pkt.Route)
-	if err := pr.Verify(c.config.CaCert); err != nil {
+	hops, err := pr.DecodeHops(c.config.CaCert)
+	if err != nil {
 		return err
 	}
 
-	summaryShort, err := pr.SummaryShort(c.config.CaCert)
+	peerDb, err := peerDbFromContext(c.context)
 	if err != nil {
+		return err
+	}
+
+	hopIdents := make(route.RouteHopIdentities, len(hops))
+	var unidentifiedPeers []*identity.PeerIdentifier
+	for i, hop := range hops {
+		ident, err := peerDb.ByPartialHash(hop.Identity.MatchPublicKey)
+		if err != nil {
+			return err
+		}
+		if !ident.IsIdentified() {
+			unidentifiedPeers = append(unidentifiedPeers, &identity.PeerIdentifier{
+				MatchPublicKey: ident.GetPartialHash(false),
+			})
+			continue
+		}
+		hopIdents[i] = ident.GetIdentity()
+	}
+
+	pend := &pendingCircuitIdentityLookup{
+		pkt:         pkt,
+		parsedRoute: pr,
+		hopIdents:   hopIdents,
+		hops:        hops,
+	}
+	if len(unidentifiedPeers) > 0 {
+		pendCtx, pendCtxCancel := context.WithCancel(c.context)
+		pend.timeoutCancel = pendCtxCancel
+		c.pendingPeerBouncesMtx.Lock()
+		c.pendingPeerBouncesCtr++
+		pend.nonce = uint32(c.pendingPeerBouncesCtr)
+		c.pendingPeerBounces[pend.nonce] = pend
+		go func() {
+			select {
+			case <-pendCtx.Done():
+				return
+			case <-time.After(pendingCircuitIdentityLookupTimeout):
+				c.pendingPeerBouncesMtx.Lock()
+				delete(c.pendingPeerBounces, pend.nonce)
+				c.pendingPeerBouncesMtx.Unlock()
+			}
+		}()
+		c.pendingPeerBouncesMtx.Unlock()
+
+		return c.config.PacketRw.WritePacket(&CircuitPeerLookupRequest{
+			QueryNonce:    pend.nonce,
+			RequestedPeer: unidentifiedPeers,
+		})
+	}
+
+	return c.finalizeCircuitProbe(pend)
+}
+
+// finalizeCircuitProbe finalizes a probe after identities are known.
+func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityLookup) error {
+	l := c.config.Log
+	pr := pend.parsedRoute
+	hopIdents := pend.hopIdents
+	pkt := pend.pkt
+
+	if err := pr.Verify(c.config.CaCert, hopIdents); err != nil {
 		return err
 	}
 
 	backwardInterface := c.config.Session.GetInterface() // asserted != nil elsewhere
 	backwardInterIdent := backwardInterface.Identifier()
+	localPpid, err := c.config.LocalIdentity.ToPartialPeerIdentifier()
+	if err != nil {
+		return err
+	}
+
+	peerDb, err := peerDbFromContext(c.context)
+	if err != nil {
+		return err
+	}
 
 	if pr.Destination.MatchesIdentity(c.config.LocalIdentity) {
-		l.Debugf("Probe (with destination us): %v", summaryShort)
+		l.Debug("Probe terminated with us")
 
-		hop := route.NewHop(c.config.LocalIdentity.Identity, nil)
+		hop := route.NewHop(nil)
+		hop.Identity = localPpid
 		hop.BackwardInterface = backwardInterIdent
 		if err := pr.AddHop(c.config.CaCert, hop, c.config.LocalIdentity); err != nil {
 			return err
 		}
 
-		return c.handleCircuitTermination(pkt, pr)
+		return c.handleCircuitTermination(pend.pkt, pr, peerDb, hopIdents)
 	}
-
-	l.Debug("Probe: %v", summaryShort)
 
 	// Instead of wasting memory, we will re-use the same route over and over.
 	outgoingMessage := CircuitProbe{Route: pkt.Route}
-
-	peerDbInter := c.context.Value("peerdb")
-	if peerDbInter == nil {
-		return errors.New("Peer db not found in Context.")
-	}
-	peerDb := peerDbInter.(*peer.PeerDatabase)
-
-	_, originalHopsIds, err := pr.DecodeHops(c.config.CaCert)
-	if err != nil {
-		return err
-	}
 
 	// For peer in connected peers...
 	peerDb.ForEachPeer(func(p *peer.Peer) (peerErr error) {
@@ -138,8 +161,7 @@ func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 		}
 
 		peerKeyIdentifier := &identity.PeerIdentifier{MatchPublicKey: (*peerKeyHash)[:]}
-
-		found := originalHopsIds.FindPartialHash(p.GetPartialHash(false))
+		found := pend.hopIdents.FindPartialHash(p.GetPartialHash(false))
 		if found != nil {
 			// Skip peer because it's already in the route.
 			return nil
@@ -176,7 +198,7 @@ func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 			msg := outgoingMessage
 			rt := msg.Route
 
-			nhop := route.NewHop(c.config.LocalIdentity.Identity, peerKeyIdentifier)
+			nhop := route.NewHop(peerKeyIdentifier)
 			nhop.BackwardInterface = backwardInterIdent
 			nhop.ForwardInterface = outgoingInterIdent
 			if err := rt.AddHop(nhop, c.config.LocalIdentity.GetPrivateKey()); err != nil {
@@ -190,5 +212,77 @@ func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 		return nil
 	})
 
+	return nil
+}
+
+// handleCircuitTermination handles a circuit probe reaching us.
+func (c *sessionControlState) handleCircuitTermination(
+	pkt *CircuitProbe,
+	pr *route.ParsedRoute,
+	peerDb *peer.PeerDatabase,
+	hopIdents route.RouteHopIdentities,
+) error {
+	localAddr, err := c.config.LocalIdentity.ToIPv6Addr(c.config.CaCert)
+	if err != nil {
+		return err
+	}
+
+	hops, err := pr.DecodeHops(c.config.CaCert)
+	if err != nil {
+		return err
+	}
+
+	remotePkh := hops[0].Identity
+	remoteAddr, err := hopIdents[0].ToIPv6Addr(c.config.CaCert)
+	if err != nil {
+		return err
+	}
+
+	routeData, err := proto.Marshal(pkt.Route)
+	if err != nil {
+		return err
+	}
+
+	est := &route.RouteEstablish{Route: routeData}
+	if err := est.SignRoute(c.config.LocalIdentity.GetPrivateKey()); err != nil {
+		return err
+	}
+
+	remotePeer, err := peerDb.ByPartialHash(hops[0].Identity.MatchPublicKey)
+	if err != nil {
+		return err
+	}
+	if remotePeer == nil {
+		return errors.New("Remote peer is not identified.")
+	}
+
+	c.config.Log.Debug("here")
+	ch := make(chan []byte)
+	circ := newCircuit(
+		c.context,
+		remotePeer,
+		localAddr,
+		remoteAddr,
+		ch,
+		est,
+		c.config.Session.GetInterface(),
+	)
+
+	circuitStream, err := c.config.Session.OpenStream(session.StreamType(EStreamType_STREAM_CIRCUIT))
+	if err != nil {
+		c.config.Log.WithError(err).Debug("Cannot open circuit stream")
+		return err
+	}
+
+	// todo: close circuitstream here if necessary
+	handler := circuitStream.(*circuitStreamHandler)
+	handler.initPkt = &CircuitInit{RouteEstablish: est}
+	if err := handler.config.PacketRw.WritePacket(handler.initPkt); err != nil {
+		return err
+	}
+	handler.SetPacketWriteChan(ch)
+	handler.circuit = circ
+
+	c.config.Log.WithField("peer", remotePkh.MarshalHashIdentifier()).Debug("Built circuit")
 	return nil
 }

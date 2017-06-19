@@ -1,15 +1,23 @@
 package circuit
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/fuserobotics/quic-channel/identity"
 	pkt "github.com/fuserobotics/quic-channel/packet"
 	"github.com/fuserobotics/quic-channel/peer"
 	"github.com/fuserobotics/quic-channel/session"
 )
+
+// CircuitBuiltHandler is assigned to the session data.
+type CircuitBuiltHandler interface {
+	// CircuitBuilt handles a new circuit. If returning err, will kill the circuit.
+	CircuitBuilt(c *Circuit) error
+}
 
 // circuitBuildTimeout is the circuit handshake timeout
 var circuitBuildTimeout = time.Duration(5) * time.Second
@@ -31,6 +39,8 @@ func (b *circuitStreamHandlerBuilder) BuildHandler(config *session.StreamHandler
 // circuitStreamHandler manages circuit streams.
 type circuitStreamHandler struct {
 	circuit         *Circuit
+	established     bool
+	initPkt         *CircuitInit
 	config          *session.StreamHandlerConfig
 	inactivityTimer *time.Timer
 	changeWriteChan chan (<-chan []byte)
@@ -52,39 +62,69 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return errors.New("Not expecting CircuitInit as the initiator.")
 	}
 
-	if h.circuit != nil {
+	if h.circuit != nil || h.initPkt != nil {
 		return errors.New("CircuitInit when the Circuit is already initialized!")
 	}
+	h.initPkt = pkt
 
 	if pkt.RouteEstablish == nil || len(pkt.RouteEstablish.Route) == 0 {
 		return errors.New("Malformed CircuitInit received.")
 	}
 
 	est := pkt.RouteEstablish
-	pr, err := est.ParseVerifyRoute(h.config.CaCert)
+	pr, err := est.ParseRoute(h.config.CaCert)
 	if err != nil {
 		return err
 	}
 
-	compl, err := est.VerifySignatures(h.config.CaCert, pr)
+	peerDbInter := ctx.Value("peerdb")
+	if peerDbInter == nil {
+		return errors.New("Peer db not given.")
+	}
+	peerDb := peerDbInter.(*peer.PeerDatabase)
+
+	hops, err := pr.DecodeHops(h.config.CaCert)
 	if err != nil {
 		return err
 	}
 
-	hops, hopIdents, err := pr.DecodeHops(h.config.CaCert)
+	hopIdents := make([]*identity.ParsedIdentity, len(hops))
+	hopPeers := make([]*peer.Peer, len(hops))
+	for i, hop := range hops {
+		ident := hop.Identity
+		peer, err := peerDb.ByPartialHash(ident.MatchPublicKey)
+		if err != nil {
+			return err
+		}
+		if !peer.IsIdentified() {
+			return fmt.Errorf("Unknown peer in route: %s", ident.MarshalHashIdentifier())
+		}
+		hopIdents[i] = peer.GetIdentity()
+		hopPeers[i] = peer
+	}
+
+	idx := -1
+	compl, err := est.VerifySignatures(h.config.CaCert, pr, func(ident *identity.PeerIdentifier) (*identity.ParsedIdentity, error) {
+		idx++
+		return hopIdents[idx], nil
+	})
 	if err != nil {
 		return err
 	}
 
 	ourHopIdx := -1
-	for i, hop := range hopIdents {
-		if hop.CompareTo(h.config.LocalIdentity) {
+	for i, hop := range hops {
+		if hop.Identity.MatchesIdentity(h.config.LocalIdentity) {
+			if ourHopIdx != -1 {
+				return errors.New("We appear in the route twice.")
+			}
 			ourHopIdx = i
 		}
 	}
 	if ourHopIdx == -1 {
 		return errors.New("Could not find myself in the route")
 	}
+	hopIdents[ourHopIdx] = h.config.LocalIdentity
 
 	// Determine the direction
 	// Forward = prevous hop forward interface = us
@@ -128,19 +168,16 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	}
 
 	// Ensure the previous hop came from the connected peer
-	if !peerId.CompareTo(hopIdents[previousHopIdx]) {
-		peerPkh, err := peerId.HashPublicKey()
+	if !hops[previousHopIdx].Identity.MatchesIdentity(peerId) {
+		peerIdHash, err := peerId.HashPublicKey()
 		if err != nil {
 			return err
 		}
-		expectedPeerPkh, err := hopIdents[previousHopIdx].HashPublicKey()
-		if err != nil {
-			return err
-		}
+
 		return fmt.Errorf(
 			"Expected previous hop to be %s, but came from %s",
-			expectedPeerPkh.MarshalHashIdentifier(),
-			peerPkh.MarshalHashIdentifier(),
+			hops[previousHopIdx].Identity.MarshalHashIdentifier(),
+			peerIdHash.MarshalHashIdentifier(),
 		)
 	}
 
@@ -158,11 +195,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		}
 
 		peerIdent := hopIdents[len(hops)-1-ourHopIdx]
-		peerPkh, err := peerIdent.HashPublicKey()
-		if err != nil {
-			return err
-		}
-
+		peer := hopPeers[len(hops)-1-ourHopIdx]
 		peerAddr, err := peerIdent.ToIPv6Addr(h.config.CaCert)
 		if err != nil {
 			return err
@@ -171,18 +204,34 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		pktWriteCh := make(chan []byte)
 		circ := newCircuit(
 			ctx,
+			peer,
 			localAddr,
 			peerAddr,
 			pktWriteCh,
 			est,
+			incomingSessionInterface,
 		)
 		h.SetPacketWriteChan(pktWriteCh)
-		_ = circ
+		h.circuit = circ
 
-		h.config.Log.WithField("peer", peerPkh.MarshalHashIdentifier()).Debug("Built circuit")
+		fest := &CircuitEstablished{}
+		if !compl {
+			fest.FinalRouteEstablish = est
+		}
+		if err := h.config.PacketRw.WritePacket(fest); err != nil {
+			return err
+		}
 
-		// TODO:
-		// If !compl we should send the establish back again after.
+		h.config.Log.Debug("Circuit finalized")
+		handlerInter := h.config.Session.GetOrPutData(2, nil)
+		if handlerInter != nil {
+			handler := handlerInter.(CircuitBuiltHandler)
+			if err := handler.CircuitBuilt(circ); err != nil {
+				return err
+			}
+		}
+		h.inactivityTimer.Reset(circuitInactivityTimeout)
+
 		return nil
 	}
 
@@ -195,12 +244,6 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	}
 
 	// Circuit terminates elsewhere. Find the peer.
-	peerDbInter := ctx.Value("peerdb")
-	if peerDbInter == nil {
-		return errors.New("Peer db not given.")
-	}
-
-	peerDb := peerDbInter.(*peer.PeerDatabase)
 	peer, err := peerDb.ByPartialHash((*nextHopPkh)[:])
 	if err != nil {
 		return err
@@ -293,6 +336,68 @@ func (h *circuitStreamHandler) readPump(ctx context.Context) error {
 			if err := h.circuit.handlePacket(pkt.PacketData); err != nil {
 				return err
 			}
+		case *CircuitEstablished:
+			if h.established {
+				return errors.New("Received CircuitEstablished multiple times.")
+			}
+
+			// h.pendingCircuit -> h.onCircuitFinalized() - ?
+			h.config.Log.Debug("Circuit established confirm received")
+			h.inactivityTimer.Reset(circuitInactivityTimeout)
+			h.established = true
+
+			if h.relayChan == nil && h.circuit == nil {
+				return errors.New("CircuitEstablished received before Circuit was established locally.")
+			}
+
+			peerDb, err := peerDbFromContext(ctx)
+			if err != nil {
+				return err
+			}
+
+			if pkt.FinalRouteEstablish != nil {
+				if bytes.Compare(pkt.FinalRouteEstablish.Route, h.initPkt.RouteEstablish.Route) != 0 {
+					return errors.New("Final RouteEstablish does not match built route.")
+				}
+				pr, err := pkt.FinalRouteEstablish.ParseRoute(h.config.CaCert)
+				if err != nil {
+					return err
+				}
+				if !pr.IsComplete(h.config.CaCert) {
+					return errors.New("Expected CircuitEstablishFinalized route to be complete.")
+				}
+				compl, err := pkt.FinalRouteEstablish.VerifySignatures(h.config.CaCert, pr, func(peerId *identity.PeerIdentifier) (*identity.ParsedIdentity, error) {
+					peer, err := peerDb.ByPartialHash(peerId.MatchPublicKey)
+					if err != nil {
+						return nil, err
+					}
+					if !peer.IsIdentified() {
+						return nil, fmt.Errorf("Unknown peer in route: %s", peerId.MarshalHashIdentifier())
+					}
+					return peer.GetIdentity(), nil
+				})
+				if err != nil {
+					return err
+				}
+				if !compl {
+					return errors.New("Expected CircuitEstablishFinalized route to be fully signed.")
+				}
+				if h.circuit != nil {
+					h.circuit.routeEstablish = pkt.FinalRouteEstablish
+				}
+			}
+
+			if h.circuit != nil {
+				h.config.Log.Debug("Circuit finalized")
+				handlerInter := h.config.Session.GetOrPutData(2, nil)
+				if handlerInter != nil {
+					handler := handlerInter.(CircuitBuiltHandler)
+					if err := handler.CircuitBuilt(h.circuit); err != nil {
+						return err
+					}
+				}
+			}
+
 		default:
 			return fmt.Errorf("Unexpected circuit packet type %d", pkt.GetPacketType())
 		}

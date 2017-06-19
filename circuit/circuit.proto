@@ -2,6 +2,7 @@ syntax = "proto3";
 package circuit;
 
 import "github.com/fuserobotics/quic-channel/route/route.proto";
+import "github.com/fuserobotics/quic-channel/identity/identity.proto";
 
 // EStreamType are the types of Circuit streams.
 enum EStreamType {
@@ -18,6 +19,24 @@ message CircuitProbe {
   route.Route route = 1;
 }
 
+// CircuitPeerLookupRequest is a request for peer ids given in the last route probe.
+// control packet_type: 6
+message CircuitPeerLookupRequest {
+  // QueryNonce is an identifier for the request.
+  uint32 query_nonce = 1;
+  // RequestedPeer are the peers in the list.
+  repeated identity.PeerIdentifier requested_peer = 2;
+}
+
+// CircuitPeerLookupResponse is a response with peer identities.
+// control packet_type: 7
+message CircuitPeerLookupResponse {
+  // QueryNonce is an identifier for the request.
+  uint32 query_nonce = 1;
+  // RequestedPeer are the peers in the list.
+  repeated identity.Identity requested_peer = 2;
+}
+
 // CircuitInit is the first message on the circuit stream.
 // circuit packet_type: 1
 message CircuitInit {
@@ -30,4 +49,11 @@ message CircuitInit {
 message CircuitPacket {
   // PacketData is the data in the packet.
   bytes packet_data = 1;
+}
+
+// CircuitEstablished is the ack that the circuit was successfully established.
+// circuit packet_type 3
+message CircuitEstablished {
+  // FinalRouteEstablish contains the final signed route if necessary.
+  route.RouteEstablish final_route_establish = 1;
 }

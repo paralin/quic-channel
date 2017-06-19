@@ -136,14 +136,35 @@ func (p *Peer) ForEachCircuitSession(cb func(sess *session.Session) error) error
 }
 
 // AddSession adds a session to the peer.
-// Note: does not check for duplicates!!
-func (p *Peer) AddSession(sess *session.Session) {
+// Checks for duplicates.
+func (p *Peer) AddSession(sess *session.Session) error {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
+
+	niid := sess.GetInterface().Identifier()
+	sessionSt := sess.GetStartTime()
+	for _, sess := range p.circuitSessions {
+		ini := sess.GetInterface()
+		if ini == nil {
+			continue
+		}
+
+		iid := ini.Identifier()
+		if iid == niid {
+			st := sess.GetStartTime()
+			userp := errors.New("Session userped by newer session")
+			if st.Before(sessionSt) {
+				sess.CloseWithErr(userp)
+			} else {
+				return userp
+			}
+		}
+	}
 
 	sess.AddCloseCallback(p.RemoveSession)
 	p.circuitSessions = append(p.circuitSessions, sess)
 	go func() { log.WithField("peer", p.GetIdentifier()).Debug("Added session") }()
+	return nil
 }
 
 // RemoveSession removes a session from the peer. Err parameter is ignored.

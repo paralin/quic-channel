@@ -161,3 +161,12 @@ func (i *ParsedIdentity) ToIPv6Addr(ca *x509.Certificate) (net.IP, error) {
 
 	return pkh.ToIPv6Addr(ca)
 }
+
+// ToPartialPeerIdentifier generates a PeerIdentifier from this identity.
+func (i *ParsedIdentity) ToPartialPeerIdentifier() (*PeerIdentifier, error) {
+	pkh, err := i.HashPublicKey()
+	if err != nil {
+		return nil, err
+	}
+	return &PeerIdentifier{MatchPublicKey: (*pkh)[:10]}, nil
+}

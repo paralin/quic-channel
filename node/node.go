@@ -106,6 +106,9 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
 	nod.childContext = context.WithValue(nod.childContext, "peerdb", nod.peerDb)
 
+	// TODO: load peerDb from cache
+	// for now insert ourselves later in this func
+
 	// build identity
 	var err error
 	if len(nc.TLSConfig.Certificates) != 1 {
@@ -136,6 +139,16 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 	if err := nod.localIdentity.SetPrivateKey(rsaPrivate); err != nil {
 		return nil, err
 	}
+	nodPkh, err := nod.localIdentity.HashPublicKey()
+	if err != nil {
+		return nil, err
+	}
+
+	usPeer, err := nod.peerDb.ByPartialHash((*nodPkh)[:])
+	if err != nil {
+		return nil, err
+	}
+	usPeer.SetIdentity(nod.localIdentity)
 
 	return nod, nil
 }
@@ -171,7 +184,7 @@ func (n *Node) DialPeer(conn net.PacketConn, remoteAddr net.Addr, host string) e
 
 // HandleSession starts manging a incoming/outgoing session
 func (n *Node) HandleSession(sess quic.Session, initiator bool) error {
-	_, err := circuit.BuildCircuitSession(
+	s, err := circuit.BuildCircuitSession(
 		n.childContext,
 		sess,
 		initiator,
@@ -183,9 +196,35 @@ func (n *Node) HandleSession(sess quic.Session, initiator bool) error {
 	if err != nil {
 		log.WithError(err).Warn("Dropped session")
 		sess.Close(err)
+	} else {
+		s.GetOrPutData(2, func() interface{} {
+			return circuit.CircuitBuiltHandler(&n.sessionHandler)
+		})
 	}
 
 	return err
+}
+
+// getCircuitBuilderForPeer ensures there is a circuit builder for a peer.
+func (n *Node) getCircuitBuilderForPeer(p *peer.Peer) *circuitBuilderWrapper {
+	builderWrapper := n.circuitBuilders[p]
+	if builderWrapper == nil {
+		ctx, ctxCancel := context.WithCancel(n.childContext)
+		builderWrapper = &circuitBuilderWrapper{
+			builder: circuit.NewCircuitBuilder(ctx, p, n.peerDb, n.localIdentity),
+			cancel:  ctxCancel,
+		}
+		n.circuitBuilders[p] = builderWrapper
+		go func() {
+			err := builderWrapper.builder.BuilderWorker()
+			ctxCancel()
+			delete(n.circuitBuilders, p)
+			if err != nil {
+				log.WithError(err).Warn("Circuit builder errored")
+			}
+		}()
+	}
+	return builderWrapper
 }
 
 // BuildCircuit instantiates a CircuitBuilder for the peer.
@@ -199,25 +238,7 @@ func (n *Node) BuildCircuit(peerId *identity.PeerIdentifier) error {
 		return err
 	}
 
-	builderWrapper := n.circuitBuilders[peer]
-	if builderWrapper == nil {
-		ctx, ctxCancel := context.WithCancel(n.childContext)
-		builderWrapper = &circuitBuilderWrapper{
-			builder: circuit.NewCircuitBuilder(ctx, peer, n.peerDb, n.localIdentity),
-			cancel:  ctxCancel,
-		}
-		n.circuitBuilders[peer] = builderWrapper
-		go func() {
-			err := builderWrapper.builder.BuilderWorker()
-			ctxCancel()
-			delete(n.circuitBuilders, peer)
-			if err != nil {
-				log.WithError(err).Warn("Circuit builder errored")
-			}
-		}()
-	}
-
-	// builder := builderWrapper.builder
+	n.getCircuitBuilderForPeer(peer)
 	return nil
 }
 
