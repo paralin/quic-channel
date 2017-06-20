@@ -1,10 +1,12 @@
 syntax = "proto3";
 package discovery;
 
+import "github.com/fuserobotics/quic-channel/identity/identity.proto";
+
 // DiscoveryEvent represents an observation of a peer over a network.
 message DiscoveryEvent {
   // PeerId is the PublicKeyHash array.
-  bytes peer_id = 1;
+  identity.PeerIdentifier peer_id = 1;
   // Timestamp is when the event was observed.
   uint64 timestamp = 2;
   // Kind is the kind of discovery event.
@@ -25,4 +27,5 @@ enum DiscoveryEventKind {
 
 // DiscoveryUDPPacket is a UDP discovery packet.
 message DiscoveryUDPPacket {
+  uint32 port = 1;
 }

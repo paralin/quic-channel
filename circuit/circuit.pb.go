@@ -85,7 +85,7 @@ func (m *CircuitProbe) GetRoute() *route.Route {
 }
 
 // CircuitPeerLookupRequest is a request for peer ids given in the last route probe.
-// control packet_type: 6
+// control+circuit packet_type: 6
 type CircuitPeerLookupRequest struct {
 	// QueryNonce is an identifier for the request.
 	QueryNonce uint32 `protobuf:"varint,1,opt,name=query_nonce,json=queryNonce" json:"query_nonce,omitempty"`
@@ -113,7 +113,7 @@ func (m *CircuitPeerLookupRequest) GetRequestedPeer() []*identity.PeerIdentifier
 }
 
 // CircuitPeerLookupResponse is a response with peer identities.
-// control packet_type: 7
+// control+circuit packet_type: 7
 type CircuitPeerLookupResponse struct {
 	// QueryNonce is an identifier for the request.
 	QueryNonce uint32 `protobuf:"varint,1,opt,name=query_nonce,json=queryNonce" json:"query_nonce,omitempty"`

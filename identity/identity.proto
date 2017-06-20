@@ -12,3 +12,9 @@ message PeerIdentifier {
   // Match by public key hash. Partials are accepted, with a minimum length.
   bytes match_public_key = 1;
 }
+
+// PeerConnection contains connection info for a peer.
+message PeerConnection {
+  // Address is the addr:port to connect to.
+  string address = 1;
+}

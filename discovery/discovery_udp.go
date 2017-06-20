@@ -2,33 +2,122 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"time"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/golang/protobuf/proto"
+	reuse "github.com/jbenet/go-reuseport"
 )
+
+// discoveryFrequency is the rate we emit discovery packets.
+var discoveryFrequency time.Duration = time.Duration(10) * time.Second
 
 // UDPDiscoveryWorker binds to a network interface and manages receiving and sending discovery packets.
 type UDPDiscoveryWorker struct {
-	discovery *Discovery
-	config    *UDPDiscoveryWorkerConfig
+	discovery  *Discovery
+	config     *UDPDiscoveryWorkerConfig
+	pumpErrors chan error
+	log        *log.Entry
+	targetAddr *net.UDPAddr
 }
 
 // DiscoverWorker manages UDP discovery.
 func (u *UDPDiscoveryWorker) DiscoverWorker(ctx context.Context) error {
-	uconn, err := net.ListenUDP("udp", &net.UDPAddr{
-		IP:   u.config.Addr.IP,
-		Port: u.config.Port,
-	})
+	u.pumpErrors = make(chan error, 1)
+	targetIp := u.config.Addr.IP.Mask(u.config.Addr.Mask)
+	targetAddr := &net.UDPAddr{IP: targetIp, Port: u.config.Port}
+	listenAddr := targetAddr
+	u.targetAddr = targetAddr
+
+	u.log = log.WithField("discovery", fmt.Sprintf("udp:%v", listenAddr.String()))
+	uconn, err := reuse.ListenPacket("udp", listenAddr)
 	if err != nil {
 		return err
 	}
 	defer uconn.Close()
 
-	targetAddr := u.config.Addr.IP.Mask(u.config.Addr.Mask)
-	_ = targetAddr
-	return nil
+	go u.readPump(uconn)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return context.Canceled
+		case err := <-u.pumpErrors:
+			return err
+		}
+	}
+}
+
+// timeoutError is returned when the read deadline is hit.
+type timeoutError interface {
+	// Timeout determines if the error is a timeout
+	Timeout() bool
+}
+
+// readPump reads UDP discovery packets.
+func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
+	defer func() {
+		if pumpErr != nil {
+			u.pumpErrors <- pumpErr
+		}
+	}()
+
+	buf := make([]byte, 10000)
+	for {
+		conn.SetReadDeadline(time.Now().Add(discoveryFrequency))
+		nread, addr, err := conn.ReadFrom(buf)
+		if err != nil {
+			if er, ok := err.(timeoutError); ok && er.Timeout() {
+				if err := u.writeIdentifier(conn, u.targetAddr); err != nil {
+					return err
+				}
+				continue
+			} else {
+				return err
+			}
+		}
+
+		if nread == 0 {
+			continue
+		}
+
+		// Read discovery packet
+		disc := &DiscoveryUDPPacket{}
+		l := u.log.WithField("addr", addr.String())
+		err = proto.Unmarshal(buf[:nread], disc)
+
+		var fromIP net.IP
+		if err == nil {
+			if disc.Port < 1000 {
+				err = errors.New("Packet missing valid port info")
+			}
+		}
+		if err == nil {
+			uaddr, ok := addr.(*net.UDPAddr)
+			if !ok {
+				err = fmt.Errorf("Expected *net.UDPAddr receive but got %#v", addr)
+			}
+			fromIP = uaddr.IP
+		}
+		if err != nil {
+			l.WithError(err).Warn("Got invalid discovery packet")
+			continue
+		}
+
+		connAddr := &net.UDPAddr{
+			IP:   fromIP,
+			Port: int(disc.Port),
+		}
+
+		u.log.
+			WithField("addr", addr.String()).
+			WithField("to", connAddr.String()).
+			Debug("Got discovery packet")
+	}
 }
 
 // Description returns a human-readable description of the worker.
@@ -37,15 +126,18 @@ func (u *UDPDiscoveryWorker) Description() string {
 }
 
 // writeIdentifier writes the identification packet to the wire.
-func (u *UDPDiscoveryWorker) writeIdentifier(conn *net.UDPConn, target *net.UDPAddr) error {
-	msg := &DiscoveryUDPPacket{}
+func (u *UDPDiscoveryWorker) writeIdentifier(conn net.PacketConn, target *net.UDPAddr) error {
+	msg := &DiscoveryUDPPacket{
+		Port: uint32(u.config.SessionPort),
+	}
 
 	data, err := proto.Marshal(msg)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.WriteToUDP(data, target)
+	// u.log.Debug("Writing discovery packet")
+	_, err = conn.WriteTo(data, target)
 	return err
 }
 

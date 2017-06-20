@@ -22,6 +22,10 @@ func (h *nodeSessionHandler) OnSessionReady(details *session.SessionReadyDetails
 		return err
 	}
 
+	if details.PeerIdentity.CompareTo(h.localIdentity) {
+		return errors.New("Cannot start session with ourselves!")
+	}
+
 	peer, err := h.peerDb.ByPartialHash(pkh[:])
 	if err != nil {
 		return err
