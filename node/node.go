@@ -242,6 +242,11 @@ func (n *Node) BuildCircuit(peerId *identity.PeerIdentifier) error {
 	return nil
 }
 
+// GetLocalIdentity returns the local identity.
+func (n *Node) GetLocalIdentity() *identity.ParsedIdentity {
+	return n.localIdentity
+}
+
 // listenPump listens for incoming sessions.
 func (n *Node) listenPump() (retErr error) {
 	defer func() {

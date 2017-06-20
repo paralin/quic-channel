@@ -8,6 +8,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/golang/protobuf/proto"
 	reuse "github.com/jbenet/go-reuseport"
@@ -108,6 +109,14 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 			continue
 		}
 
+		peerIdent := "unknown"
+		if disc.Peer != nil {
+			if disc.Peer.CompareTo(u.config.PeerIdentifier) {
+				continue
+			}
+			peerIdent = disc.Peer.MarshalHashIdentifier()
+		}
+
 		connAddr := &net.UDPAddr{
 			IP:   fromIP,
 			Port: int(disc.Port),
@@ -115,6 +124,7 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 
 		u.log.
 			WithField("addr", addr.String()).
+			WithField("peer", peerIdent).
 			WithField("to", connAddr.String()).
 			Debug("Got discovery packet")
 	}
@@ -129,6 +139,7 @@ func (u *UDPDiscoveryWorker) Description() string {
 func (u *UDPDiscoveryWorker) writeIdentifier(conn net.PacketConn, target *net.UDPAddr) error {
 	msg := &DiscoveryUDPPacket{
 		Port: uint32(u.config.SessionPort),
+		Peer: u.config.PeerIdentifier,
 	}
 
 	data, err := proto.Marshal(msg)
@@ -151,11 +162,13 @@ type UDPDiscoveryWorkerConfig struct {
 	Port int
 	// SessionPort is the port the session listener is on
 	SessionPort int
+	// Identity is the local peer identifier
+	PeerIdentifier *identity.PeerIdentifier
 }
 
 // GenerateUDPWorkerConfigs reads the list of network interfaces and generates UDP discovery workers.
 // temporary implementation
-func GenerateUDPWorkerConfigs(listenPort, sessionPort int) ([]*UDPDiscoveryWorkerConfig, error) {
+func GenerateUDPWorkerConfigs(peerId *identity.PeerIdentifier, listenPort, sessionPort int) ([]*UDPDiscoveryWorkerConfig, error) {
 	inters, err := network.ListNetworkInterfaces()
 	if err != nil {
 		return nil, err
@@ -168,10 +181,11 @@ func GenerateUDPWorkerConfigs(listenPort, sessionPort int) ([]*UDPDiscoveryWorke
 			continue
 		}
 		configs = append(configs, &UDPDiscoveryWorkerConfig{
-			Addr:        bcastAddr,
-			Interface:   inter,
-			Port:        listenPort,
-			SessionPort: sessionPort,
+			Addr:           bcastAddr,
+			Interface:      inter,
+			Port:           listenPort,
+			SessionPort:    sessionPort,
+			PeerIdentifier: peerId,
 		})
 	}
 	return configs, nil

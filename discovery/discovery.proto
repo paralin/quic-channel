@@ -28,4 +28,5 @@ enum DiscoveryEventKind {
 // DiscoveryUDPPacket is a UDP discovery packet.
 message DiscoveryUDPPacket {
   uint32 port = 1;
+  identity.PeerIdentifier peer = 2;
 }

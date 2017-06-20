@@ -57,17 +57,6 @@ var NodeCommand = cli.Command{
 			return err
 		}
 
-		var discoveryWorkerConfigs []interface{}
-		if nodeArgs.BcastPort != 0 {
-			uconfs, err := discovery.GenerateUDPWorkerConfigs(nodeArgs.BcastPort, nodeArgs.ListenPort)
-			if err != nil {
-				return err
-			}
-			for _, conf := range uconfs {
-				discoveryWorkerConfigs = append(discoveryWorkerConfigs, conf)
-			}
-		}
-
 		exitCh := make(chan error, 1)
 		n, err := node.BuildNode(&node.NodeConfig{
 			Context:   context.Background(),
@@ -79,6 +68,21 @@ var NodeCommand = cli.Command{
 		})
 		if err != nil {
 			return err
+		}
+
+		var discoveryWorkerConfigs []interface{}
+		if nodeArgs.BcastPort != 0 {
+			ppid, err := n.GetLocalIdentity().ToPartialPeerIdentifier()
+			if err != nil {
+				return err
+			}
+			uconfs, err := discovery.GenerateUDPWorkerConfigs(ppid, nodeArgs.BcastPort, nodeArgs.ListenPort)
+			if err != nil {
+				return err
+			}
+			for _, conf := range uconfs {
+				discoveryWorkerConfigs = append(discoveryWorkerConfigs, conf)
+			}
 		}
 
 		err = n.ListenAddr(&node.NodeListenConfig{
