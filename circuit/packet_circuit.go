@@ -23,9 +23,14 @@ func (i *CircuitEstablished) GetPacketType() packet.PacketType {
 }
 
 func init() {
-	CircuitPacketIdentifier.AddPacketType(
+	err := CircuitPacketIdentifier.AddPacketType(
 		func() packet.Packet { return &CircuitInit{} },
 		func() packet.Packet { return &CircuitEstablished{} },
 		func() packet.Packet { return &CircuitPacket{} },
+		func() packet.Packet { return &CircuitPeerLookupRequest{} },
+		func() packet.Packet { return &CircuitPeerLookupResponse{} },
 	)
+	if err != nil {
+		panic(err)
+	}
 }

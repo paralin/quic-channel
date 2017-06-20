@@ -20,7 +20,7 @@ message CircuitProbe {
 }
 
 // CircuitPeerLookupRequest is a request for peer ids given in the last route probe.
-// control packet_type: 6
+// control+circuit packet_type: 6
 message CircuitPeerLookupRequest {
   // QueryNonce is an identifier for the request.
   uint32 query_nonce = 1;
@@ -29,7 +29,7 @@ message CircuitPeerLookupRequest {
 }
 
 // CircuitPeerLookupResponse is a response with peer identities.
-// control packet_type: 7
+// control+circuit packet_type: 7
 message CircuitPeerLookupResponse {
   // QueryNonce is an identifier for the request.
   uint32 query_nonce = 1;

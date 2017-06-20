@@ -38,7 +38,7 @@ func (p *CircuitPeerLookupResponse) GetPacketType() packet.PacketType {
 var ControlPacketIdentifier = packet.NewPacketIdentifier()
 
 func init() {
-	ControlPacketIdentifier.AddPacketType(
+	err := ControlPacketIdentifier.AddPacketType(
 		func() packet.Packet { return &SessionInitChallenge{} },
 		func() packet.Packet { return &SessionInitResponse{} },
 		func() packet.Packet { return &KeepAlive{} },
@@ -46,4 +46,7 @@ func init() {
 		func() packet.Packet { return &CircuitPeerLookupRequest{} },
 		func() packet.Packet { return &CircuitPeerLookupResponse{} },
 	)
+	if err != nil {
+		panic(err)
+	}
 }

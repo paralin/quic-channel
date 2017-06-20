@@ -36,7 +36,6 @@ type Circuit struct {
 
 // newCircuit builds the base circuit object.
 func newCircuit(
-	ctx context.Context,
 	peer *peer.Peer,
 	localAddr,
 	remoteAddr net.IP,
@@ -53,7 +52,8 @@ func newCircuit(
 		routeEstablish:  routeEstablish,
 		outgoingInter:   outgoingInter,
 	}
-	c.ctx, c.ctxCancel = context.WithCancel(ctx)
+	// base context on the background, and rely on circuits calling Close() appropriately
+	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
 	go c.OnDone(func(c *Circuit) {
 		log.WithField("peer", c.peer.GetIdentifier()).Debug("Circuit closed")
 	})

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/fuserobotics/quic-channel/identity"
+	"github.com/fuserobotics/quic-channel/network"
 	pkt "github.com/fuserobotics/quic-channel/packet"
 	"github.com/fuserobotics/quic-channel/peer"
+	"github.com/fuserobotics/quic-channel/route"
 	"github.com/fuserobotics/quic-channel/session"
 )
 
@@ -36,8 +38,22 @@ func (b *circuitStreamHandlerBuilder) BuildHandler(config *session.StreamHandler
 	}, nil
 }
 
+// pendingCircuitInit contains information while we negotiate a circuit init
+type pendingCircuitInit struct {
+	pkt                      *CircuitInit
+	parsedRoute              *route.ParsedRoute
+	peerDb                   *peer.PeerDatabase
+	hops                     route.RouteHops
+	sentPeerLookup           bool
+	ourHopIdx                int
+	previousHopIdx           int
+	streamCtl                *sessionControlState
+	incomingSessionInterface *network.NetworkInterface
+}
+
 // circuitStreamHandler manages circuit streams.
 type circuitStreamHandler struct {
+	pendingInit     *pendingCircuitInit
 	circuit         *Circuit
 	established     bool
 	initPkt         *CircuitInit
@@ -46,6 +62,7 @@ type circuitStreamHandler struct {
 	changeWriteChan chan (<-chan []byte)
 	done            <-chan struct{}
 	relayChan       chan []byte
+	relayHandler    *circuitStreamHandler
 }
 
 // SetPacketWriteChan sets the channel the session reads from for packets to write to the stream.
@@ -62,6 +79,14 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return errors.New("Not expecting CircuitInit as the initiator.")
 	}
 
+	if pkt == nil {
+		return errors.New("Cannot handle nil circuit init packet.")
+	}
+
+	if h.pendingInit != nil {
+		return errors.New("CircuitInit with existing pending init in place!")
+	}
+
 	if h.circuit != nil || h.initPkt != nil {
 		return errors.New("CircuitInit when the Circuit is already initialized!")
 	}
@@ -71,46 +96,26 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return errors.New("Malformed CircuitInit received.")
 	}
 
+	pendingInit := &pendingCircuitInit{pkt: pkt}
 	est := pkt.RouteEstablish
 	pr, err := est.ParseRoute(h.config.CaCert)
 	if err != nil {
 		return err
 	}
+	pendingInit.parsedRoute = pr
 
 	peerDbInter := ctx.Value("peerdb")
 	if peerDbInter == nil {
 		return errors.New("Peer db not given.")
 	}
 	peerDb := peerDbInter.(*peer.PeerDatabase)
+	pendingInit.peerDb = peerDb
 
 	hops, err := pr.DecodeHops(h.config.CaCert)
 	if err != nil {
 		return err
 	}
-
-	hopIdents := make([]*identity.ParsedIdentity, len(hops))
-	hopPeers := make([]*peer.Peer, len(hops))
-	for i, hop := range hops {
-		ident := hop.Identity
-		peer, err := peerDb.ByPartialHash(ident.MatchPublicKey)
-		if err != nil {
-			return err
-		}
-		if !peer.IsIdentified() {
-			return fmt.Errorf("Unknown peer in route: %s", ident.MarshalHashIdentifier())
-		}
-		hopIdents[i] = peer.GetIdentity()
-		hopPeers[i] = peer
-	}
-
-	idx := -1
-	compl, err := est.VerifySignatures(h.config.CaCert, pr, func(ident *identity.PeerIdentifier) (*identity.ParsedIdentity, error) {
-		idx++
-		return hopIdents[idx], nil
-	})
-	if err != nil {
-		return err
-	}
+	pendingInit.hops = hops
 
 	ourHopIdx := -1
 	for i, hop := range hops {
@@ -124,7 +129,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	if ourHopIdx == -1 {
 		return errors.New("Could not find myself in the route")
 	}
-	hopIdents[ourHopIdx] = h.config.LocalIdentity
+	pendingInit.ourHopIdx = ourHopIdx
 
 	// Grab the control manager
 	streamCtlInter := h.config.Session.GetOrPutData(1, nil)
@@ -132,6 +137,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return errors.New("Got circuit build before control stream built.")
 	}
 	streamCtl := streamCtlInter.(*sessionControlState)
+	pendingInit.streamCtl = streamCtl
 	peerId := streamCtl.peerIdentity
 	if peerId == nil {
 		return errors.New("Got circuit build before control handshake complete.")
@@ -148,6 +154,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	} else {
 		return errors.New("Cannot find previous hop in the chain / determine direction.")
 	}
+	pendingInit.previousHopIdx = previousHopIdx
 
 	forward := previousHopIdx < ourHopIdx
 	var expectedIncomingInterfaceId uint32
@@ -162,6 +169,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return errors.New("Cannot determine incoming network interface.")
 	}
 	incomingSessionInterfaceId := incomingSessionInterface.Identifier()
+	pendingInit.incomingSessionInterface = incomingSessionInterface
 
 	if incomingSessionInterfaceId != expectedIncomingInterfaceId {
 		return fmt.Errorf("Expected incoming interface %d but got %d", expectedIncomingInterfaceId, incomingSessionInterfaceId)
@@ -181,21 +189,63 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		)
 	}
 
+	return h.finalizeCircuitInit(pendingInit)
+}
+
+// finalizeCircuitInit attempts to finalize a pendingCircuitInit
+func (h *circuitStreamHandler) finalizeCircuitInit(pi *pendingCircuitInit) error {
+	var unknownPeers []*identity.PeerIdentifier
+	hopIdents := make(route.RouteHopIdentities, len(pi.hops))
+	hopPeers := make([]*peer.Peer, len(pi.hops))
+	for i, hop := range pi.hops {
+		ident := hop.Identity
+		peer, err := pi.peerDb.ByPartialHash(ident.MatchPublicKey)
+		if err != nil {
+			return err
+		}
+		if !peer.IsIdentified() {
+			unknownPeers = append(unknownPeers, ident)
+			if pi.sentPeerLookup {
+				return fmt.Errorf("Unknown peer in route after peer lookup: %s", ident.MarshalHashIdentifier())
+			}
+			pi.sentPeerLookup = true
+		}
+		hopIdents[i] = peer.GetIdentity()
+		hopPeers[i] = peer
+	}
+	if len(unknownPeers) > 0 {
+		h.pendingInit = pi
+		return h.config.PacketRw.WritePacket(&CircuitPeerLookupRequest{
+			QueryNonce:    1,
+			RequestedPeer: unknownPeers,
+		})
+	}
+
+	idx := -1
+	est := pi.pkt.RouteEstablish
+	compl, err := est.VerifySignatures(h.config.CaCert, pi.parsedRoute, func(ident *identity.PeerIdentifier) (*identity.ParsedIdentity, error) {
+		idx++
+		return hopIdents[idx], nil
+	})
+	if err != nil {
+		return err
+	}
+
 	if !compl {
 		if err := est.SignRoute(h.config.LocalIdentity.GetPrivateKey()); err != nil {
 			return err
 		}
 	}
 
-	if ourHopIdx == 0 || ourHopIdx == len(hops)-1 {
+	if pi.ourHopIdx == 0 || pi.ourHopIdx == len(pi.hops)-1 {
 		// Circuit terminates with us.
 		localAddr, err := h.config.LocalIdentity.ToIPv6Addr(h.config.CaCert)
 		if err != nil {
 			return err
 		}
 
-		peerIdent := hopIdents[len(hops)-1-ourHopIdx]
-		peer := hopPeers[len(hops)-1-ourHopIdx]
+		peerIdent := hopIdents[len(pi.hops)-1-pi.ourHopIdx]
+		peer := hopPeers[len(pi.hops)-1-pi.ourHopIdx]
 		peerAddr, err := peerIdent.ToIPv6Addr(h.config.CaCert)
 		if err != nil {
 			return err
@@ -203,13 +253,12 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 
 		pktWriteCh := make(chan []byte)
 		circ := newCircuit(
-			ctx,
 			peer,
 			localAddr,
 			peerAddr,
 			pktWriteCh,
 			est,
-			incomingSessionInterface,
+			pi.incomingSessionInterface,
 		)
 		h.SetPacketWriteChan(pktWriteCh)
 		h.circuit = circ
@@ -235,7 +284,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		return nil
 	}
 
-	nextHopIdx := ourHopIdx - (previousHopIdx - ourHopIdx)
+	nextHopIdx := pi.ourHopIdx - (pi.previousHopIdx - pi.ourHopIdx)
 	// nextHop := hops[nextHopIdx]
 	nextHopIdent := hopIdents[nextHopIdx]
 	nextHopPkh, err := nextHopIdent.HashPublicKey()
@@ -244,7 +293,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	}
 
 	// Circuit terminates elsewhere. Find the peer.
-	peer, err := peerDb.ByPartialHash((*nextHopPkh)[:])
+	peer, err := pi.peerDb.ByPartialHash((*nextHopPkh)[:])
 	if err != nil {
 		return err
 	}
@@ -268,7 +317,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		}
 
 		sessInterId := sessInter.Identifier()
-		if sessInterId != hops[ourHopIdx].ForwardInterface {
+		if sessInterId != pi.hops[pi.ourHopIdx].ForwardInterface {
 			return nil
 		}
 
@@ -283,18 +332,21 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 		}
 
 		h.config.Log.
-			WithField("peer1", hops[previousHopIdx].Identity.MarshalHashIdentifier()).
+			WithField("peer1", pi.hops[pi.previousHopIdx].Identity.MarshalHashIdentifier()).
 			WithField("peer2", nextHopPkh.MarshalHashIdentifier()).
 			Debug("Built circuit relay")
 		ch := make(chan []byte)
 		circHandler.SetPacketWriteChan(ch)
 		h.relayChan = ch
+		h.relayHandler = circHandler
 
 		chr := make(chan []byte)
 		circHandler.relayChan = chr
+		circHandler.initPkt = h.initPkt
+		circHandler.relayHandler = h
 		h.SetPacketWriteChan(chr)
 
-		return circHandler.config.PacketRw.WritePacket(pkt)
+		return circHandler.config.PacketRw.WritePacket(pi.pkt)
 	})
 	if err != nil {
 		return err
@@ -313,6 +365,9 @@ func (h *circuitStreamHandler) readPump(ctx context.Context) error {
 		)
 		if err != nil {
 			return err
+		}
+		if packet == nil {
+			return errors.New("Got nil packet.")
 		}
 
 		switch pkt := packet.(type) {
@@ -339,6 +394,50 @@ func (h *circuitStreamHandler) readPump(ctx context.Context) error {
 			if err := h.circuit.handlePacket(pkt.PacketData); err != nil {
 				return err
 			}
+		case *CircuitPeerLookupRequest:
+			// TODO: some condition here?
+			peerDb, err := peerDbFromContext(ctx)
+			if err != nil {
+				return err
+			}
+			resp := &CircuitPeerLookupResponse{QueryNonce: pkt.QueryNonce}
+			for _, peerId := range pkt.RequestedPeer {
+				peer, err := peerDb.ByPartialHash(peerId.MatchPublicKey)
+				if err != nil {
+					return err
+				}
+				if !peer.IsIdentified() {
+					return fmt.Errorf("Peer %s not identified.", peer.GetIdentifier())
+				}
+				resp.RequestedPeer = append(resp.RequestedPeer, peer.GetIdentity().Identity)
+			}
+			if len(resp.RequestedPeer) == 0 {
+				return errors.New("Got empty CircuitPeerLookupRequest")
+			}
+			if err := h.config.PacketRw.WritePacket(resp); err != nil {
+				return err
+			}
+		case *CircuitPeerLookupResponse:
+			pi := h.pendingInit
+			if pi == nil {
+				return errors.New("Unsolicited peer lookup response")
+			}
+			h.pendingInit = nil
+			for _, peerId := range pkt.RequestedPeer {
+				parsedId := identity.NewParsedIdentity(peerId)
+				idPkh, err := parsedId.HashPublicKey()
+				if err != nil {
+					return err
+				}
+				peer, err := pi.peerDb.ByPartialHash((*idPkh)[:])
+				if err != nil {
+					return err
+				}
+				if err := peer.SetIdentity(parsedId); err != nil {
+					return err
+				}
+			}
+			return h.finalizeCircuitInit(pi)
 		case *CircuitEstablished:
 			if h.established {
 				return errors.New("Received CircuitEstablished multiple times.")
@@ -349,7 +448,7 @@ func (h *circuitStreamHandler) readPump(ctx context.Context) error {
 			h.inactivityTimer.Reset(circuitInactivityTimeout)
 			h.established = true
 
-			if h.relayChan == nil && h.circuit == nil {
+			if h.initPkt == nil || (h.relayChan == nil && h.circuit == nil) {
 				return errors.New("CircuitEstablished received before Circuit was established locally.")
 			}
 
@@ -396,6 +495,11 @@ func (h *circuitStreamHandler) readPump(ctx context.Context) error {
 				if handlerInter != nil {
 					handler := handlerInter.(CircuitBuiltHandler)
 					if err := handler.CircuitBuilt(h.circuit); err != nil {
+						return err
+					}
+				}
+				if h.relayHandler != nil {
+					if err := h.relayHandler.config.PacketRw.WritePacket(pkt); err != nil {
 						return err
 					}
 				}

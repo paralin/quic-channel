@@ -15,11 +15,16 @@ func NewPacketIdentifier() *PacketIdentifier {
 }
 
 // AddPacketType adds a packet constructor to the identifier.
-func (i *PacketIdentifier) AddPacketType(constructors ...func() Packet) {
+func (i *PacketIdentifier) AddPacketType(constructors ...func() Packet) error {
 	for _, constructor := range constructors {
 		sample := constructor()
-		i.packetConstructors[sample.GetPacketType()] = constructor
+		pktType := sample.GetPacketType()
+		if old, ok := i.packetConstructors[pktType]; ok {
+			return fmt.Errorf("Duplicate packet type: %#v and %#v", sample, old())
+		}
+		i.packetConstructors[pktType] = constructor
 	}
+	return nil
 }
 
 // IdentifyPacket identifies the packet for the decoder.

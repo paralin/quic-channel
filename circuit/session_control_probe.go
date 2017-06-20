@@ -260,10 +260,8 @@ func (c *sessionControlState) handleCircuitTermination(
 		return errors.New("Remote peer is not identified.")
 	}
 
-	c.config.Log.Debug("here")
 	ch := make(chan []byte)
 	circ := newCircuit(
-		c.context,
 		remotePeer,
 		localAddr,
 		remoteAddr,
