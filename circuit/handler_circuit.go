@@ -126,13 +126,24 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	}
 	hopIdents[ourHopIdx] = h.config.LocalIdentity
 
+	// Grab the control manager
+	streamCtlInter := h.config.Session.GetOrPutData(1, nil)
+	if streamCtlInter == nil {
+		return errors.New("Got circuit build before control stream built.")
+	}
+	streamCtl := streamCtlInter.(*sessionControlState)
+	peerId := streamCtl.peerIdentity
+	if peerId == nil {
+		return errors.New("Got circuit build before control handshake complete.")
+	}
+
 	// Determine the direction
 	// Forward = prevous hop forward interface = us
 	// Forward is therefore lastHopIdx < ourHopIdx
 	var previousHopIdx int
-	if ourHopIdx > 0 && hops[ourHopIdx-1].Next.MatchesIdentity(h.config.LocalIdentity) {
+	if ourHopIdx > 0 && hops[ourHopIdx-1].Identity.MatchesIdentity(peerId) {
 		previousHopIdx = ourHopIdx - 1
-	} else if ourHopIdx < len(hops)-1 {
+	} else if ourHopIdx < len(hops)-1 && hops[ourHopIdx+1].Identity.MatchesIdentity(peerId) {
 		previousHopIdx = ourHopIdx + 1
 	} else {
 		return errors.New("Cannot find previous hop in the chain / determine direction.")
@@ -154,17 +165,6 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 
 	if incomingSessionInterfaceId != expectedIncomingInterfaceId {
 		return fmt.Errorf("Expected incoming interface %d but got %d", expectedIncomingInterfaceId, incomingSessionInterfaceId)
-	}
-
-	// Grab the control manager
-	streamCtlInter := h.config.Session.GetOrPutData(1, nil)
-	if streamCtlInter == nil {
-		return errors.New("Got circuit build before control stream built.")
-	}
-	streamCtl := streamCtlInter.(*sessionControlState)
-	peerId := streamCtl.peerIdentity
-	if peerId == nil {
-		return errors.New("Got circuit build before control handshake complete.")
 	}
 
 	// Ensure the previous hop came from the connected peer
@@ -282,7 +282,10 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 			return errors.New("Expected STREAM_CIRCUIT to yield a circuitStreamHandler")
 		}
 
-		h.config.Log.WithField("peer", nextHopPkh.MarshalHashIdentifier()).Debug("Built circuit relay")
+		h.config.Log.
+			WithField("peer1", hops[previousHopIdx].Identity.MarshalHashIdentifier()).
+			WithField("peer2", nextHopPkh.MarshalHashIdentifier()).
+			Debug("Built circuit relay")
 		ch := make(chan []byte)
 		circHandler.SetPacketWriteChan(ch)
 		h.relayChan = ch

@@ -199,6 +199,10 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 			rt := msg.Route
 
 			nhop := route.NewHop(peerKeyIdentifier)
+			nhop.Identity, err = c.config.LocalIdentity.ToPartialPeerIdentifier()
+			if err != nil {
+				return err
+			}
 			nhop.BackwardInterface = backwardInterIdent
 			nhop.ForwardInterface = outgoingInterIdent
 			if err := rt.AddHop(nhop, c.config.LocalIdentity.GetPrivateKey()); err != nil {

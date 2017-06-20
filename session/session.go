@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -287,7 +288,7 @@ func (s *Session) runStreamHandler(handler StreamHandler, stream quic.Stream) {
 
 	err := handler.Handle(ctx)
 	l := log.WithField("stream", uint32(id))
-	if err != nil {
+	if err != nil && err != io.EOF {
 		l.WithError(err).Warn("Stream closed with error")
 	} else {
 		l.Debug("Stream closed")
