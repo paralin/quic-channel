@@ -10,6 +10,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
+	"github.com/fuserobotics/quic-channel/timestamp"
 	"github.com/golang/protobuf/proto"
 	reuse "github.com/jbenet/go-reuseport"
 )
@@ -19,7 +20,7 @@ var discoveryFrequency time.Duration = time.Duration(10) * time.Second
 
 // UDPDiscoveryWorker binds to a network interface and manages receiving and sending discovery packets.
 type UDPDiscoveryWorker struct {
-	discovery  *Discovery
+	eventCh    chan<- *DiscoveryEvent
 	config     *UDPDiscoveryWorkerConfig
 	pumpErrors chan error
 	log        *log.Entry
@@ -104,6 +105,9 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 			}
 			fromIP = uaddr.IP
 		}
+		if err == nil {
+			err = disc.Peer.Verify()
+		}
 		if err != nil {
 			l.WithError(err).Warn("Got invalid discovery packet")
 			continue
@@ -127,6 +131,16 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 			WithField("peer", peerIdent).
 			WithField("to", connAddr.String()).
 			Debug("Got discovery packet")
+
+		u.eventCh <- &DiscoveryEvent{
+			Inter:     u.config.Interface.Identifier(),
+			Kind:      DiscoveryEventKind_DISCOVER_OBSERVED_BROADCAST,
+			PeerId:    disc.Peer,
+			Timestamp: timestamp.Now(),
+			ConnInfo: &identity.PeerConnection{
+				Address: connAddr.String(),
+			},
+		}
 	}
 }
 
@@ -164,6 +178,14 @@ type UDPDiscoveryWorkerConfig struct {
 	SessionPort int
 	// Identity is the local peer identifier
 	PeerIdentifier *identity.PeerIdentifier
+}
+
+// BuildWorker returns the worker.
+func (u *UDPDiscoveryWorkerConfig) BuildWorker(ch chan<- *DiscoveryEvent) (DiscoveryWorker, error) {
+	return &UDPDiscoveryWorker{
+		config:  u,
+		eventCh: ch,
+	}, nil
 }
 
 // GenerateUDPWorkerConfigs reads the list of network interfaces and generates UDP discovery workers.

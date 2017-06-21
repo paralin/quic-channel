@@ -14,6 +14,7 @@ type Discovery struct {
 	config     DiscoveryConfig
 	pumpErrors chan error
 	peerDb     *peer.PeerDatabase
+	eventCh    chan *DiscoveryEvent
 }
 
 // DiscoveryConfig is the information used to construct a Discovery.
@@ -31,7 +32,7 @@ type DiscoveryConfig struct {
 // DiscoveryEventHandler has callbacks for events in the discovery.
 type DiscoveryEventHandler interface {
 	// OnPeerEvent is called when a peer has a new discovery event.
-	OnPeerEvent(peer *peer.Peer, event *DiscoveryEvent) error
+	OnPeerEvent(event *DiscoveryEvent)
 }
 
 // NewDiscovery builds a new Discovery.
@@ -40,6 +41,7 @@ func NewDiscovery(config DiscoveryConfig) *Discovery {
 		config:     config,
 		pumpErrors: make(chan error, 2),
 		peerDb:     config.PeerDb,
+		eventCh:    make(chan *DiscoveryEvent, 10),
 	}
 }
 
@@ -49,17 +51,19 @@ func (d *Discovery) ManageDiscovery() (retErr error) {
 		select {
 		case <-d.config.Context.Done():
 			return context.Canceled
+		case eve := <-d.eventCh:
+			for _, handler := range d.config.EventHandlers {
+				handler.OnPeerEvent(eve)
+			}
 		}
 	}
 }
 
 // AddDiscoveryWorker adds and starts a worker given a worker config.
-func (d *Discovery) AddDiscoveryWorker(conf interface{}) error {
-	var worker DiscoveryWorker
-
-	switch config := conf.(type) {
-	case *UDPDiscoveryWorkerConfig:
-		worker = &UDPDiscoveryWorker{config: config}
+func (d *Discovery) AddDiscoveryWorker(conf DiscoveryWorkerConfig) error {
+	worker, err := conf.BuildWorker(d.eventCh)
+	if err != nil {
+		return err
 	}
 
 	if worker != nil {

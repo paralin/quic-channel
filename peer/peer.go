@@ -135,6 +135,25 @@ func (p *Peer) ForEachCircuitSession(cb func(sess *session.Session) error) error
 	return nil
 }
 
+// SessionByInterface looks up a peer session by interface.
+func (p *Peer) SessionByInterface(inter uint32) *session.Session {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	for _, sess := range p.circuitSessions {
+		ift := sess.GetInterface()
+		if ift == nil {
+			continue
+		}
+
+		if ift.Identifier() == inter {
+			return sess
+		}
+	}
+
+	return nil
+}
+
 // AddSession adds a session to the peer.
 // Checks for duplicates.
 func (p *Peer) AddSession(sess *session.Session) error {

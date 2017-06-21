@@ -35,7 +35,7 @@ type NodeListenConfig struct {
 	// Port is the port to listen on.
 	Port int
 	// DiscoveryConfigs are discovery worker configurations.
-	DiscoveryConfigs []interface{}
+	DiscoveryConfigs []discovery.DiscoveryWorkerConfig
 }
 
 // circuitBuilderWrapper wraps a CircuitBuilder with a cancellation
@@ -78,15 +78,17 @@ func (n *Node) ListenAddr(lc *NodeListenConfig) error {
 	go n.listenPump()
 
 	n.discovery = discovery.NewDiscovery(discovery.DiscoveryConfig{
-		Context:   n.childContext,
-		TLSConfig: n.config.TLSConfig,
-		PeerDb:    n.peerDb,
+		Context:       n.childContext,
+		TLSConfig:     n.config.TLSConfig,
+		PeerDb:        n.peerDb,
+		EventHandlers: []discovery.DiscoveryEventHandler{&n.sessionHandler},
 	})
 	for _, conf := range lc.DiscoveryConfigs {
 		if err := n.discovery.AddDiscoveryWorker(conf); err != nil {
 			log.WithError(err).Warn("Unable to start discovery worker")
 		}
 	}
+	go n.discovery.ManageDiscovery()
 
 	return nil
 }

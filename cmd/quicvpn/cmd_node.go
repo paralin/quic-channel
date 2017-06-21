@@ -70,19 +70,17 @@ var NodeCommand = cli.Command{
 			return err
 		}
 
-		var discoveryWorkerConfigs []interface{}
+		var discoveryWorkerConfigs []discovery.DiscoveryWorkerConfig
 		if nodeArgs.BcastPort != 0 {
 			ppid, err := n.GetLocalIdentity().ToPartialPeerIdentifier()
 			if err != nil {
 				return err
 			}
-			uconfs, err := discovery.GenerateUDPWorkerConfigs(ppid, nodeArgs.BcastPort, nodeArgs.ListenPort)
-			if err != nil {
-				return err
-			}
-			for _, conf := range uconfs {
-				discoveryWorkerConfigs = append(discoveryWorkerConfigs, conf)
-			}
+			discoveryWorkerConfigs = append(discoveryWorkerConfigs, &discovery.UDPDiscoveryWorkerBuilderConfig{
+				PeerIdentifier: ppid,
+				Port:           nodeArgs.BcastPort,
+				SessionPort:    nodeArgs.ListenPort,
+			})
 		}
 
 		err = n.ListenAddr(&node.NodeListenConfig{

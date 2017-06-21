@@ -25,7 +25,9 @@ type CircuitBuiltHandler interface {
 var circuitBuildTimeout = time.Duration(5) * time.Second
 
 // circuitInactivityTimeout is the circuit inactivity timeout
-var circuitInactivityTimeout = time.Duration(20) * time.Second
+// Artificially bumped during early development
+// var circuitInactivityTimeout = time.Duration(20) * time.Second
+var circuitInactivityTimeout = time.Duration(120) * time.Second
 
 // circuitStreamHandlerBuilder builds circuit stream handlers.
 type circuitStreamHandlerBuilder struct{}

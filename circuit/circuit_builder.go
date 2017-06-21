@@ -151,8 +151,10 @@ func (cb *CircuitBuilder) BuilderWorker() error {
 			_ = c
 		case <-probeTimer.C:
 			probeTimer.Stop()
-			if err := cb.emitCircuitProbe(); err != nil {
-				return err
+			if len(cb.circuits) == 0 {
+				if err := cb.emitCircuitProbe(); err != nil {
+					return err
+				}
 			}
 			startProbeTimer()
 		}

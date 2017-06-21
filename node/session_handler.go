@@ -6,6 +6,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/circuit"
+	"github.com/fuserobotics/quic-channel/discovery"
 	"github.com/fuserobotics/quic-channel/session"
 )
 
@@ -62,4 +63,38 @@ func (h *nodeSessionHandler) CircuitBuilt(c *circuit.Circuit) error {
 	builder := h.getCircuitBuilderForPeer(peer)
 	builder.builder.AddCircuit(c)
 	return nil
+}
+
+// OnPeerEvent is called when a peer discovery event occurs
+func (n *nodeSessionHandler) OnPeerEvent(eve *discovery.DiscoveryEvent) {
+	func() (retErr error) {
+		defer func() {
+			if retErr != nil {
+				log.WithError(retErr).Warn("Unable to process peer event")
+			}
+		}()
+
+		if eve.ConnInfo == nil {
+			return nil
+		}
+
+		peer, err := n.peerDb.ByPartialHash(eve.PeerId.MatchPublicKey)
+		if err != nil {
+			return err
+		}
+
+		sess := peer.SessionByInterface(eve.Inter)
+		if sess != nil {
+			return nil
+		}
+
+		log.
+			WithField("peer", eve.PeerId.MarshalHashIdentifier()).
+			WithField("addr", eve.ConnInfo.Address).
+			WithField("iface", eve.Inter).
+			Debug("Dialing [discovered via broadcast]")
+
+		go n.DialPeerAddr(eve.ConnInfo.Address)
+		return nil
+	}()
 }

@@ -4,6 +4,12 @@ import (
 	"context"
 )
 
+// DiscoveryWorkerConfig configures a DiscoveryWorker
+type DiscoveryWorkerConfig interface {
+	// BuildWorker yields a worker from the config.
+	BuildWorker(ch chan<- *DiscoveryEvent) (DiscoveryWorker, error)
+}
+
 // DiscoveryWorker discovers peers with a specific method.
 type DiscoveryWorker interface {
 	// DiscoverWorker processes discovering on the worker.
