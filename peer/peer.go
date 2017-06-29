@@ -162,19 +162,25 @@ func (p *Peer) AddSession(sess *session.Session) error {
 
 	niid := sess.GetInterface().Identifier()
 	sessionSt := sess.GetStartTime()
-	for _, sess := range p.circuitSessions {
-		ini := sess.GetInterface()
+	for _, ss := range p.circuitSessions {
+		ini := ss.GetInterface()
 		if ini == nil {
 			continue
 		}
 
 		iid := ini.Identifier()
 		if iid == niid {
-			st := sess.GetStartTime()
+			st := ss.GetStartTime()
 			userp := errors.New("Session userped by newer session")
+			l := log.
+				WithField("iface", iid).
+				WithField("id1", ss.GetId()).
+				WithField("id2", sess.GetId())
 			if st.Before(sessionSt) {
-				sess.CloseWithErr(userp)
+				l.Debug("Userping 1")
+				ss.CloseWithErr(userp)
 			} else {
+				l.Debug("Userping 2")
 				return userp
 			}
 		}

@@ -83,16 +83,17 @@ func (n *nodeSessionHandler) OnPeerEvent(eve *discovery.DiscoveryEvent) {
 			return err
 		}
 
+		le := log.
+			WithField("peer", eve.PeerId.MarshalHashIdentifier()).
+			WithField("addr", eve.ConnInfo.Address).
+			WithField("iface", eve.Inter)
+
 		sess := peer.SessionByInterface(eve.Inter)
 		if sess != nil {
 			return nil
 		}
 
-		log.
-			WithField("peer", eve.PeerId.MarshalHashIdentifier()).
-			WithField("addr", eve.ConnInfo.Address).
-			WithField("iface", eve.Inter).
-			Debug("Dialing [discovered via broadcast]")
+		le.Debug("Dialing [discovered via event]")
 
 		go n.DialPeerAddr(eve.ConnInfo.Address)
 		return nil

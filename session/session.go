@@ -21,8 +21,12 @@ import (
 // handshakeTimeout is the time allowed for a handshake.
 var handshakeTimeout = time.Duration(3 * time.Second)
 
+// sessionIdCtr assigns an integer id to sessions for logging
+var sessionIdCtr int = 1
+
 // Session manages a connection with a remote peer.
 type Session struct {
+	id                int
 	context           context.Context
 	log               *log.Entry
 	initiator         bool
@@ -88,6 +92,7 @@ type SessionConfig struct {
 // NewSession builds a new session.
 func NewSession(config SessionConfig) (*Session, error) {
 	s := &Session{
+		id:                    sessionIdCtr,
 		started:               time.Now(),
 		context:               config.Context,
 		session:               config.Session,
@@ -100,9 +105,10 @@ func NewSession(config SessionConfig) (*Session, error) {
 		sessionData:           make(map[uint32]interface{}),
 		streamHandlers:        make(map[protocol.StreamID]StreamHandler),
 		localIdentity:         config.LocalIdentity,
-		log:                   log.WithField("remote", config.Session.RemoteAddr().String()),
+		log:                   log.WithField("session", sessionIdCtr),
 		caCert:                config.CaCertificate,
 	}
+	sessionIdCtr++
 	if config.LocalIdentity == nil || config.LocalIdentity.GetPrivateKey() == nil {
 		return nil, errors.New("Local identity must be set with a private key.")
 	}
@@ -126,6 +132,11 @@ func NewSession(config SessionConfig) (*Session, error) {
 // IsInitiator returns if the session was initiated by the local host.
 func (s *Session) IsInitiator() bool {
 	return s.initiator
+}
+
+// GetId gets the incremented ID of this session
+func (s *Session) GetId() int {
+	return s.id
 }
 
 // GetStartTime returns the time the session started.
@@ -211,7 +222,7 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 	}
 
 	shConfig := s.buildBaseStreamHandlerConfig(true)
-	shConfig.Log = log.WithField("stream", uint32(streamId))
+	shConfig.Log = s.log.WithField("stream", uint32(streamId))
 	shConfig.Session = s
 	shConfig.PacketRw = rw
 	shConfig.Stream = stream
@@ -380,7 +391,10 @@ func (s *Session) manageCloseConditions() (sessErr error) {
 		l.Debug("Session closed")
 	}()
 
-	s.log.Debug("Session started")
+	s.log.
+		WithField("addr", s.session.RemoteAddr().String()).
+		WithField("initiator", s.initiator).
+		Debug("Session started")
 	select {
 	case <-s.context.Done():
 		return context.Canceled

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
+	"os"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -15,8 +17,11 @@ import (
 	reuse "github.com/jbenet/go-reuseport"
 )
 
-// discoveryFrequency is the rate we emit discovery packets.
-var discoveryFrequency time.Duration = time.Duration(10) * time.Second
+// discoveryMinInterval is the min time between discovery packets.
+var discoveryMinInterval time.Duration = time.Duration(5) * time.Second
+
+// discoveryMaxInterval is the max time between discovery packets.
+var discoveryMaxInterval time.Duration = time.Duration(15) * time.Second
 
 // UDPDiscoveryWorker binds to a network interface and manages receiving and sending discovery packets.
 type UDPDiscoveryWorker struct {
@@ -36,6 +41,10 @@ func (u *UDPDiscoveryWorker) DiscoverWorker(ctx context.Context) error {
 	u.targetAddr = targetAddr
 
 	u.log = log.WithField("discovery", fmt.Sprintf("udp:%v", listenAddr.String()))
+	if _, ok := os.LookupEnv("QC_DISCOVERY_VERBOSE"); !ok {
+		u.log.Level = log.InfoLevel
+	}
+
 	uconn, err := reuse.ListenPacket("udp", listenAddr)
 	if err != nil {
 		return err
@@ -70,7 +79,8 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 
 	buf := make([]byte, 10000)
 	for {
-		conn.SetReadDeadline(time.Now().Add(discoveryFrequency))
+		interval := time.Duration(rand.Int63n(int64(discoveryMaxInterval-discoveryMinInterval))) + discoveryMinInterval
+		conn.SetReadDeadline(time.Now().Add(interval))
 		nread, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			if er, ok := err.(timeoutError); ok && er.Timeout() {
