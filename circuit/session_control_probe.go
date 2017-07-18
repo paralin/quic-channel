@@ -257,6 +257,7 @@ func (c *sessionControlState) handleCircuitTermination(
 	}
 
 	remotePeer, err := peerDb.ByPartialHash(hops[0].Identity.MatchPublicKey)
+	// TODO: also do peer lookup in this direction
 	if err != nil {
 		return err
 	}
@@ -283,6 +284,7 @@ func (c *sessionControlState) handleCircuitTermination(
 		c.context,
 		c.config.TLSConfig,
 		c.config.LocalIdentity,
+		c.config.CaCert,
 		remotePeer,
 		c.config.Session.GetInterface(),
 		con,

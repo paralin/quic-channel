@@ -371,6 +371,7 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 			ctx,
 			h.config.TLSConfig,
 			h.config.LocalIdentity,
+			h.config.CaCert,
 			peer,
 			pi.incomingSessionInterface,
 			pktConn,

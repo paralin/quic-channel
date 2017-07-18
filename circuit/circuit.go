@@ -45,6 +45,7 @@ func newCircuit(
 	ctx context.Context,
 	localTLSConfig *tls.Config,
 	localIdentity *identity.ParsedIdentity,
+	caCert *x509.Certificate,
 	peer *peer.Peer,
 	outgoingInter *network.NetworkInterface,
 	packetConn network.BoundPacketConn,
@@ -60,7 +61,13 @@ func newCircuit(
 		outgoingInter:   outgoingInter,
 		tlsConfig:       localTLSConfig,
 		localIdentity:   localIdentity,
+		caCert:          caCert,
 	}
+
+	if !peer.IsIdentified() {
+		panic("peer must be identified to build circuit")
+	}
+
 	c.ctx, c.ctxCancel = context.WithCancel(ctx)
 	c.sessionHandler.Circuit = c
 

@@ -170,6 +170,18 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 					)
 				}
 				pend.hopIdents[i] = parsedIdent
+
+				peerDb, err := peerDbFromContext(c.context)
+				if err != nil {
+					return err
+				}
+				pendPeer, err := peerDb.ByPartialHash((*parsedIdentPkh)[:])
+				if err != nil {
+					return err
+				}
+				if err := pendPeer.SetIdentity(parsedIdent); err != nil {
+					return err
+				}
 			}
 		}
 

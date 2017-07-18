@@ -55,6 +55,10 @@ func (i *ParsedIdentity) verifyPrivateKey() error {
 
 // CompareTo sees if two parsed identities are equivilent.
 func (i *ParsedIdentity) CompareTo(other *ParsedIdentity) bool {
+	if other == nil || i == nil {
+		return false
+	}
+
 	pkh, err := i.HashPublicKey()
 	if err != nil {
 		return false

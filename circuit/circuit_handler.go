@@ -1,7 +1,7 @@
 package circuit
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/fuserobotics/quic-channel/session"
 )
@@ -19,8 +19,16 @@ func (h *circuitSessionHandler) OnSessionReady(details *session.SessionReadyDeta
 		return err
 	}
 
-	if details.PeerIdentity.CompareTo(h.peer.GetIdentity()) {
-		return errors.New("unexpected peer on other end of channel")
+	if !details.PeerIdentity.CompareTo(h.peer.GetIdentity()) {
+		foundPkh, err := details.PeerIdentity.HashPublicKey()
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf(
+			"channel: expected peer %s but handshook with %s",
+			h.peer.GetIdentifier(),
+			foundPkh.MarshalHashIdentifier(),
+		)
 	}
 
 	details.Session.SetStartTime(details.InitiatedTimestamp)
