@@ -95,7 +95,7 @@ func (n *nodeSessionHandler) OnPeerEvent(eve *discovery.DiscoveryEvent) {
 
 		le.Debug("Dialing [discovered via event]")
 
-		go n.DialPeerAddr(eve.ConnInfo.Address)
+		go n.DialPeer(eve.ConnInfo.Address)
 		return nil
 	}()
 }

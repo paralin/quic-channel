@@ -1,35 +1,26 @@
 package circuit
 
 import (
+	"github.com/fuserobotics/quic-channel/handshake"
 	"github.com/fuserobotics/quic-channel/packet"
 )
 
-// PacketType returns the packet type of the stream init packet.
-func (p *SessionInitChallenge) GetPacketType() packet.PacketType {
-	return 2
-}
-
-// PacketType returns the packet type of the stream init packet.
-func (p *SessionInitResponse) GetPacketType() packet.PacketType {
-	return 3
-}
-
-// PacketType returns the packet type of the stream init packet.
+// ProtoPacketType returns the packet type of the stream init packet.
 func (p *KeepAlive) GetPacketType() packet.PacketType {
 	return 4
 }
 
-// PacketType returns the packet type of the stream init packet.
+// ProtoPacketType returns the packet type of the stream init packet.
 func (p *CircuitProbe) GetPacketType() packet.PacketType {
 	return 5
 }
 
-// PacketType returns the packet type of the stream init packet.
+// ProtoPacketType returns the packet type of the stream init packet.
 func (p *CircuitPeerLookupRequest) GetPacketType() packet.PacketType {
 	return 6
 }
 
-// PacketType returns the packet type of the stream init packet.
+// ProtoPacketType returns the packet type of the stream init packet.
 func (p *CircuitPeerLookupResponse) GetPacketType() packet.PacketType {
 	return 7
 }
@@ -38,14 +29,15 @@ func (p *CircuitPeerLookupResponse) GetPacketType() packet.PacketType {
 var ControlPacketIdentifier = packet.NewPacketIdentifier()
 
 func init() {
-	err := ControlPacketIdentifier.AddPacketType(
-		func() packet.Packet { return &SessionInitChallenge{} },
-		func() packet.Packet { return &SessionInitResponse{} },
-		func() packet.Packet { return &KeepAlive{} },
-		func() packet.Packet { return &CircuitProbe{} },
-		func() packet.Packet { return &CircuitPeerLookupRequest{} },
-		func() packet.Packet { return &CircuitPeerLookupResponse{} },
-	)
+	err := handshake.AddPacketTypes(ControlPacketIdentifier)
+	if err == nil {
+		err = ControlPacketIdentifier.AddPacketType(
+			func() packet.ProtoPacket { return &KeepAlive{} },
+			func() packet.ProtoPacket { return &CircuitProbe{} },
+			func() packet.ProtoPacket { return &CircuitPeerLookupRequest{} },
+			func() packet.ProtoPacket { return &CircuitPeerLookupResponse{} },
+		)
+	}
 	if err != nil {
 		panic(err)
 	}

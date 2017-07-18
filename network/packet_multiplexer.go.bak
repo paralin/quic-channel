@@ -1,0 +1,153 @@
+package network
+
+import (
+	"context"
+	"net"
+	"sync"
+	"time"
+)
+
+// PacketConnMultiplexer multiplexes packets over multiple connections.
+type PacketConnMultiplexer struct {
+	ctx context.Context
+
+	localAddr  net.Addr
+	remoteAddr net.Addr
+
+	deadlineMtx   sync.Mutex
+	readDeadline  time.Time
+	writeDeadline time.Time
+
+	connsMtx sync.Mutex
+	conns    []*multiplexedConnection // List of connections, priority ordered.
+	packetCh chan []byte              // Channel of packets.
+}
+
+// multiplexedConnection is a container for a conn.
+type multiplexedConnection struct {
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	conn      net.PacketConn // Conn is the connection.
+}
+
+// NewPacketConnMultiplexer builds a new packet conn multiplexer.
+func NewPacketConnMultiplexer(localAddr, remoteAddr net.Conn) *PacketConnMultiplexer {
+	return &PacketConnMultiplexer{
+		localAddr:  localAddr,
+		remoteAddr: remoteAddr,
+		packetCh:   make(chan []byte),
+	}
+}
+
+// manageConnection manages a net.PacketConn.
+func (c *multiplexedConnection) manageConnection(m *PacketConnMultiplexer) {
+}
+
+// AddConnection adds a net.PacketConn to the multiplexer.
+func (m *PacketConnMultiplexer) AddConnection(conn net.PacketConn) {
+	m.connsMtx.Lock()
+	defer m.connsMtx.Unlock()
+
+	for _, c := range m.conns {
+		if c.conn == conn {
+			return
+		}
+	}
+
+	ctx, ctxCancel := context.WithCancel(m.ctx)
+	m.conns = append(m.conns, multiplexedConnection{
+		ctx:       ctx,
+		ctxCancel: ctxCancel,
+		conn:      conn,
+	})
+}
+
+// RemoveConnection removes the connection from the multiplexer.
+func (m *PacketConnMultiplexer) RemoveConnection(conn net.PacketConn) {
+	m.connsMtx.Lock()
+	defer m.connsMtx.Unlock()
+
+	for i, iconn := range m.conns {
+		if iconn.conn == conn {
+			iconn.ctxCancel()
+			a := m.conns
+			a[i] = a[len(a)-1]
+			a[len(a)-1] = nil
+			m.conns = a[:len(a)-1]
+			break
+		}
+	}
+}
+
+// LocalAddr returns the local network address.
+func (c *PacketConnMultiplexer) LocalAddr() net.Addr {
+	return c.localAddr
+}
+
+// ReadFrom reads a packet from the connection,
+// copying the payload into b. It returns the number of
+// bytes copied into b and the return address that
+// was on the packet.
+// ReadFrom can be made to time out and return
+// an Error with Timeout() == true after a fixed time limit;
+// see SetDeadline and SetReadDeadline.
+func (c *PacketConnMultiplexer) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
+	return 0, nil, nil
+}
+
+// WriteTo writes a packet with payload b to addr.
+// WriteTo can be made to time out and return
+// an Error with Timeout() == true after a fixed time limit;
+// see SetDeadline and SetWriteDeadline.
+// On packet-oriented connections, write timeouts are rare.
+func (c *PacketConnMultiplexer) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+}
+
+// SetDeadline sets the read and write deadlines associated
+// with the connection. It is equivalent to calling both
+// SetReadDeadline and SetWriteDeadline.
+//
+// A deadline is an absolute time after which I/O operations
+// fail with a timeout (see type Error) instead of
+// blocking. The deadline applies to all future and pending
+// I/O, not just the immediately following call to ReadFrom or
+// WriteTo. After a deadline has been exceeded, the connection
+// can be refreshed by setting a deadline in the future.
+//
+// An idle timeout can be implemented by repeatedly extending
+// the deadline after successful ReadFrom or WriteTo calls.
+//
+// A zero value for t means I/O operations will not time out.
+func (c *PacketConnMultiplexer) SetDeadline(t time.Time) error {
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
+	if err := c.SetWriteDeadline(t); err != nil {
+		return err
+	}
+	return nil
+}
+
+// SetReadDeadline sets the deadline for future ReadFrom calls
+// and any currently-blocked ReadFrom call.
+// A zero value for t means ReadFrom will not time out.
+func (c *PacketConnMultiplexer) SetReadDeadline(t time.Time) error {
+	c.readDeadline = t
+	return nil
+}
+
+// SetWriteDeadline sets the deadline for future WriteTo calls
+// and any currently-blocked WriteTo call.
+// Even if write times out, it may return n > 0, indicating that
+// some of the data was successfully written.
+// A zero value for t means WriteTo will not time out.
+func (c *PacketConnMultiplexer) SetWriteDeadline(t time.Time) error {
+	c.writeDeadline = t
+	return nil
+}
+
+// Close closes the channel.
+// Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
+func (c *PacketConnMultiplexer) Close() error {
+	return nil
+}

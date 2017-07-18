@@ -1,4 +1,4 @@
-package circuit
+package channel
 
 import (
 	"context"
@@ -10,15 +10,23 @@ import (
 	"github.com/fuserobotics/quic-channel/session"
 )
 
-// BuildCircuitSession builds a session in the manager given a quic session.
-func BuildCircuitSession(
+// ChannelSessionConfig configures a channel session.
+type ChannelSessionConfig struct {
+	// ExpectedPeerIdentity is the identity of the target peer.
+	ExpectedPeerIdentity *identity.ParsedIdentity
+}
+
+// BuildChannelSession builds a session in the manager given a quic session.
+func BuildChannelSession(
 	ctx context.Context,
 	sess netproto.Session,
 	manager session.SessionManager,
 	localIdentity *identity.ParsedIdentity,
 	caCert *x509.Certificate,
 	tlsConfig *tls.Config,
+	sessConfig *ChannelSessionConfig,
 ) (*session.Session, error) {
+	ctx = context.WithValue(ctx, "channelSessionConfig", sessConfig)
 	nsess, err := session.NewSession(session.SessionConfig{
 		Context:         ctx,
 		Manager:         manager,

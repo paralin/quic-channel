@@ -2,61 +2,68 @@ package circuit
 
 import (
 	"context"
-	"errors"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
-	"io"
-	"net"
+	// "net"
 	"sync"
-	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/netproto"
+	npq "github.com/fuserobotics/netproto/quic"
+	"github.com/fuserobotics/quic-channel/channel"
+	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/fuserobotics/quic-channel/peer"
-	"github.com/fuserobotics/quic-channel/route"
+	"github.com/fuserobotics/quic-channel/session"
+	"github.com/lucas-clemente/quic-go"
 )
 
 // Circuit manages state for a multi-hop connection.
-// It also implements net.PacketConn.
 type Circuit struct {
-	ctx           context.Context
-	ctxCancel     context.CancelFunc
-	localAddr     net.Addr
-	remoteAddr    net.Addr
+	BoundPacketConn network.BoundPacketConn
+	ctx             context.Context
+	ctxCancel       context.CancelFunc
+	initiator       bool
+	log             *log.Entry
+	sessionHandler  circuitSessionHandler
+
 	peer          *peer.Peer
 	outgoingInter *network.NetworkInterface
+	tlsConfig     *tls.Config
+	localIdentity *identity.ParsedIdentity
+	caCert        *x509.Certificate
 
-	deadlineMtx    sync.Mutex
-	readDeadline   time.Time
-	writeDeadline  time.Time
-	routeEstablish *route.RouteEstablish
+	session netproto.Session
 
-	packetChan      chan []byte
-	packetWriteChan chan<- []byte
+	sessionMtx sync.Mutex
+	// sessionBuiltCallbacks []chan *ChannelSession // TODO:
 }
 
 // newCircuit builds the base circuit object.
 func newCircuit(
+	ctx context.Context,
+	localTLSConfig *tls.Config,
+	localIdentity *identity.ParsedIdentity,
 	peer *peer.Peer,
-	localAddr,
-	remoteAddr net.IP,
-	packetWriteChan chan<- []byte,
-	routeEstablish *route.RouteEstablish,
 	outgoingInter *network.NetworkInterface,
+	packetConn network.BoundPacketConn,
+	// If we are the initiator, then we sent the Establish message.
+	initiator bool,
+	log *log.Entry,
 ) *Circuit {
 	c := &Circuit{
+		BoundPacketConn: packetConn,
+		log:             log,
+		initiator:       initiator,
 		peer:            peer,
-		localAddr:       &net.UDPAddr{IP: localAddr, Port: 5},
-		remoteAddr:      &net.UDPAddr{IP: remoteAddr, Port: 5},
-		packetChan:      make(chan []byte),
-		packetWriteChan: packetWriteChan,
-		routeEstablish:  routeEstablish,
 		outgoingInter:   outgoingInter,
+		tlsConfig:       localTLSConfig,
+		localIdentity:   localIdentity,
 	}
-	// base context on the background, and rely on circuits calling Close() appropriately
-	c.ctx, c.ctxCancel = context.WithCancel(context.Background())
-	go c.OnDone(func(c *Circuit) {
-		log.WithField("peer", c.peer.GetIdentifier()).Debug("Circuit closed")
-	})
+	c.ctx, c.ctxCancel = context.WithCancel(ctx)
+	c.sessionHandler.Circuit = c
+
 	return c
 }
 
@@ -70,170 +77,91 @@ func (c *Circuit) GetPeer() *peer.Peer {
 	return c.peer
 }
 
-// handlePacket handles a packet.
-func (c *Circuit) handlePacket(packet []byte) error {
-	select {
-	case <-c.ctx.Done():
-		return context.Canceled
-	case c.packetChan <- packet:
-		return nil
-	}
-}
-
-// LocalAddr returns the local network address.
-func (c *Circuit) LocalAddr() net.Addr {
-	return c.localAddr
-}
-
-// OnDone waits for the circuit to exit, then calls a func.
-func (c *Circuit) OnDone(cb func(c *Circuit)) {
-	<-c.ctx.Done()
-	cb(c)
-}
-
-// ReadFrom reads a packet from the connection,
-// copying the payload into b. It returns the number of
-// bytes copied into b and the return address that
-// was on the packet.
-// ReadFrom can be made to time out and return
-// an Error with Timeout() == true after a fixed time limit;
-// see SetDeadline and SetReadDeadline.
-func (c *Circuit) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	for {
-		c.deadlineMtx.Lock()
-		readDeadline := c.readDeadline
-		c.deadlineMtx.Unlock()
-
-		// If there is no packet available, return.
-		var deadline <-chan time.Time
-		if !readDeadline.IsZero() {
-			if readDeadline.Before(time.Now()) && !readDeadline.IsZero() {
-				select {
-				case pak := <-c.packetChan:
-					if len(pak) > len(b) {
-						return 0, nil, io.ErrShortBuffer
-					}
-					copy(b, pak)
-					return len(pak), c.remoteAddr, nil
-				default:
-				}
-
-				return 0, nil, &circuitTimeoutError{error: errors.New("ReadFrom deadline exceeded.")}
-			}
-
-			// Otherwise, wait until then.
-			deadline = time.After(time.Until(readDeadline))
+// ManageCircuit is a goroutine to manage state for the circuit.
+func (c *Circuit) ManageCircuit() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			c.log.WithError(retErr).Error("Circuit exited with error")
+		} else {
+			c.log.Debug("Circuit exited")
 		}
+	}()
 
-		select {
-		case <-c.ctx.Done():
-			return 0, nil, context.Canceled
-		case pak := <-c.packetChan:
-			if len(pak) > len(b) {
-				return 0, nil, io.ErrShortBuffer
-			}
-			copy(b, pak)
-			return len(pak), c.remoteAddr, nil
-		case <-deadline:
-			continue
-		}
+	if err := c.establishSession(); err != nil {
+		return err
 	}
-}
+	c.log.Debug("Circuit channel session established")
+	defer c.session.Close()
 
-// WriteTo writes a packet with payload b to addr.
-// WriteTo can be made to time out and return
-// an Error with Timeout() == true after a fixed time limit;
-// see SetDeadline and SetWriteDeadline.
-// On packet-oriented connections, write timeouts are rare.
-func (c *Circuit) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	if addr != c.remoteAddr {
-		return 0, fmt.Errorf("Circuit is bound to %s - cannot write to %s", c.remoteAddr.String(), addr.String())
+	channelSess, err := channel.BuildChannelSession(
+		c.ctx,
+		c.session,
+		&c.sessionHandler,
+		c.localIdentity,
+		c.caCert,
+		c.tlsConfig,
+		&channel.ChannelSessionConfig{
+			ExpectedPeerIdentity: c.peer.GetIdentity(),
+		},
+	)
+	if err != nil {
+		return err
 	}
 
-	for {
-		c.deadlineMtx.Lock()
-		writeDeadline := c.writeDeadline
-		c.deadlineMtx.Unlock()
+	retErrCh := make(chan error, 1)
+	channelSess.AddCloseCallback(func(s *session.Session, err error) {
+		retErrCh <- err
+	})
+	return <-retErrCh
+}
 
-		var deadline <-chan time.Time
-		// If we cannot write immediately, return.
-		if !writeDeadline.IsZero() {
-			if writeDeadline.Before(time.Now()) && !writeDeadline.IsZero() {
-				select {
-				case c.packetWriteChan <- b:
-					return len(b), nil
-				default:
-				}
+// establishSession dials or listens for the incoming session.
+func (c *Circuit) establishSession() error {
+	var sess netproto.Session
+	var err error
 
-				return 0, &circuitTimeoutError{error: errors.New("WriteFrom deadline exceeded.")}
-			}
-
-			// Otherwise, wait until then.
-			deadline = time.After(time.Until(writeDeadline))
-		}
-
-		select {
-		case <-c.ctx.Done():
-			return 0, context.Canceled
-		case c.packetWriteChan <- b:
-			return len(b), nil
-		case <-deadline:
-			continue
-		}
+	if c.initiator {
+		c.log.Debug("Establishing session by accepting peer")
+		sess, err = c.acceptPeer()
+	} else {
+		c.log.Debug("Establishing session by dialing peer")
+		sess, err = c.dialPeer()
 	}
+
+	if err != nil {
+		c.log.WithError(err).Warn("Session establish failed")
+	}
+
+	c.session = sess
+	return err
 }
 
-// SetDeadline sets the read and write deadlines associated
-// with the connection. It is equivalent to calling both
-// SetReadDeadline and SetWriteDeadline.
-//
-// A deadline is an absolute time after which I/O operations
-// fail with a timeout (see type Error) instead of
-// blocking. The deadline applies to all future and pending
-// I/O, not just the immediately following call to ReadFrom or
-// WriteTo. After a deadline has been exceeded, the connection
-// can be refreshed by setting a deadline in the future.
-//
-// An idle timeout can be implemented by repeatedly extending
-// the deadline after successful ReadFrom or WriteTo calls.
-//
-// A zero value for t means I/O operations will not time out.
-func (c *Circuit) SetDeadline(t time.Time) error {
-	c.deadlineMtx.Lock()
-	defer c.deadlineMtx.Unlock()
-
-	c.readDeadline = t
-	c.writeDeadline = t
-	return nil
+// buildProtocol constructs the protocol for the session.
+func (c *Circuit) buildProtocol() netproto.Protocol {
+	return npq.NewQuic(
+		&quic.Config{
+			RequestConnectionIDTruncation: true,
+			KeepAlive:                     true,
+		},
+		c.tlsConfig,
+	)
 }
 
-// SetReadDeadline sets the deadline for future ReadFrom calls
-// and any currently-blocked ReadFrom call.
-// A zero value for t means ReadFrom will not time out.
-func (c *Circuit) SetReadDeadline(t time.Time) error {
-	c.deadlineMtx.Lock()
-	defer c.deadlineMtx.Unlock()
+// acceptPeer accepts a incoming peer quic session.
+func (c *Circuit) acceptPeer() (netproto.Session, error) {
+	listener, err := c.buildProtocol().ListenWithConn(c.BoundPacketConn)
+	if err != nil {
+		return nil, err
+	}
 
-	c.readDeadline = t
-	return nil
+	return listener.AcceptSession()
 }
 
-// SetWriteDeadline sets the deadline for future WriteTo calls
-// and any currently-blocked WriteTo call.
-// Even if write times out, it may return n > 0, indicating that
-// some of the data was successfully written.
-// A zero value for t means WriteTo will not time out.
-func (c *Circuit) SetWriteDeadline(t time.Time) error {
-	c.deadlineMtx.Lock()
-	defer c.deadlineMtx.Unlock()
-
-	c.writeDeadline = t
-	return nil
-}
-
-// Close closes the channel.
-// Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
-func (c *Circuit) Close() error {
-	c.ctxCancel()
-	return nil
+// dialPeer starts dialing over the built circuit.
+// note: this is a blocking function.
+func (c *Circuit) dialPeer() (netproto.Session, error) {
+	peerName := c.peer.GetIdentifier()
+	sni := fmt.Sprintf("%s:%d", peerName, 1) // TODO: determine the proper SNI
+	return c.buildProtocol().
+		DialWithConn(c.BoundPacketConn, c.BoundPacketConn.RemoteAddr(), sni)
 }

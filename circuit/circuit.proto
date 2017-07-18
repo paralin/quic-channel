@@ -46,10 +46,7 @@ message CircuitInit {
 
 // CircuitPacket is a packet sent over the circuit.
 // circuit packet_type 2
-message CircuitPacket {
-  // PacketData is the data in the packet.
-  bytes packet_data = 1;
-}
+// - transported raw -
 
 // CircuitEstablished is the ack that the circuit was successfully established.
 // circuit packet_type 3
@@ -57,3 +54,7 @@ message CircuitEstablished {
   // FinalRouteEstablish contains the final signed route if necessary.
   route.RouteEstablish final_route_establish = 1;
 }
+
+// KeepAlive is a keep alive packet.
+// control packet_type: 4, sent periodically to hold the conn open.
+message KeepAlive {}

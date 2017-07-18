@@ -1,27 +1,24 @@
 package circuit
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/rsa"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/fuserobotics/quic-channel/handshake"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/fuserobotics/quic-channel/session"
-	"github.com/fuserobotics/quic-channel/signature"
-	"github.com/fuserobotics/quic-channel/timestamp"
-	"github.com/golang/protobuf/proto"
 )
 
 // sessionControlState is the state for the session's control data.
 type sessionControlState struct {
 	context        context.Context
 	config         *session.StreamHandlerConfig
+	handshaker     *handshake.Handshaker
 	packets        chan packet.Packet
 	keepAliveTimer *time.Timer
 
@@ -34,7 +31,6 @@ type sessionControlState struct {
 	activeHandler    *controlStreamHandler
 
 	activePacketHandler func(pkt packet.Packet) error
-	challengeNonce      []byte
 
 	pendingPeerBouncesMtx sync.Mutex
 	pendingPeerBouncesCtr int
@@ -46,18 +42,25 @@ func newSessionControlState(
 	ctx context.Context,
 	config *session.StreamHandlerConfig,
 ) *sessionControlState {
-	s := &sessionControlState{
+	var s *sessionControlState
+	s = &sessionControlState{
 		context:            ctx,
 		config:             config,
 		packets:            make(chan packet.Packet, 5),
 		pendingPeerBounces: make(map[uint32]*pendingCircuitIdentityLookup),
+		handshaker: handshake.NewHandshaker(
+			config.PacketRw,
+			config.LocalIdentity,
+			config.CaCert,
+			func(peerIdentity *identity.ParsedIdentity) error {
+				s.peerIdentity = peerIdentity
+				return s.completeHandshake()
+			},
+			config.Session.IsInitiator(),
+		),
+		initTimestamp: time.Now(),
 	}
-	if config.Session.IsInitiator() {
-		s.activePacketHandler = s.handleForwardHandshakeInitiator
-	} else {
-		s.initTimestamp = time.Now()
-		s.activePacketHandler = s.handleForwardHandshakeReceiver
-	}
+	s.activePacketHandler = s.handshaker.HandlePacket
 	return s
 }
 
@@ -68,7 +71,7 @@ func (s *sessionControlState) handleControl() error {
 	s.keepAliveTimer = time.NewTimer(keepAliveFrequency)
 	if !s.config.Session.IsInitiator() {
 		s.keepAliveTimer.Stop()
-		if err := s.sendChallenge(); err != nil {
+		if err := s.handshaker.SendChallenge(); err != nil {
 			return err
 		}
 	}
@@ -94,6 +97,33 @@ func (s *sessionControlState) handleControl() error {
 			return err
 		}
 	}
+}
+
+// completeHandshake is called to complete the handshake sequence.
+func (c *sessionControlState) completeHandshake() error {
+	c.activePacketHandler = c.handleControlPacket
+	c.handshaker = nil
+	err := c.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{
+		Session:            c.config.Session,
+		InitiatedTimestamp: c.initTimestamp,
+		PeerIdentity:       c.peerIdentity,
+	})
+	if err != nil {
+		return err
+	}
+
+	c.config.Session.ResetInactivityTimeout(inactivityTimeout)
+	c.keepAliveTimer.Reset(keepAliveFrequency)
+
+	pkh, err := c.peerIdentity.HashPublicKey()
+	if err != nil {
+		return err
+	}
+	hashId := pkh.MarshalHashIdentifier()
+	c.config.Log = c.config.Log.WithField("peer", hashId)
+
+	c.config.Log.Debug("Session handshake complete")
+	return nil
 }
 
 // handleControlPacket handles packets after the handshake is complete.
@@ -170,12 +200,14 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 			}
 			result = append(result, np.GetIdentity().Identity)
 		}
+
 		response := &CircuitPeerLookupResponse{
 			QueryNonce:    nonce,
 			RequestedPeer: result,
 		}
+
 		fmt.Printf("Sending lookup response %#v\n", *response)
-		err = c.config.PacketRw.WritePacket(response)
+		err = c.config.PacketRw.WriteProtoPacket(response)
 		if err != nil {
 			return err
 		}
@@ -188,12 +220,12 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 }
 
 // sendPacket attempts to send a packet to the peer.
-func (c *sessionControlState) sendPacket(packet packet.Packet) error {
+func (c *sessionControlState) sendPacket(packet packet.ProtoPacket) error {
 	if c.activeHandler == nil {
 		return errors.New("No control stream opened to send on.")
 	}
 
-	return c.activeHandler.config.PacketRw.WritePacket(packet)
+	return c.activeHandler.config.PacketRw.WriteProtoPacket(packet)
 }
 
 // sendKeepAlive transmits a keep alive message to the stream.
@@ -202,87 +234,4 @@ func (c *sessionControlState) sendKeepAlive() error {
 	defer c.activeHandlerMtx.Unlock()
 
 	return c.sendPacket(&KeepAlive{})
-}
-
-// buildChallenge generates a new challenge.
-func (c *sessionControlState) buildChallenge() (*SessionChallenge, error) {
-	nonce := make([]byte, sessionNonceLen)
-	_, err := rand.Read(nonce)
-	if err != nil {
-		return nil, err
-	}
-	c.challengeNonce = nonce
-	return &SessionChallenge{ChallengeNonce: c.challengeNonce}, nil
-}
-
-// sendChallenge sends the first challenge (as the server).
-func (c *sessionControlState) sendChallenge() (sendChErr error) {
-	challenge, err := c.buildChallenge()
-	if err != nil {
-		return err
-	}
-
-	return c.sendPacket(&SessionInitChallenge{
-		Challenge: challenge,
-		Timestamp: timestamp.TimeToTimestamp(c.initTimestamp),
-	})
-}
-
-// sendChallengeResponse sends the challenge response.
-func (c *sessionControlState) sendChallengeResponse(challenge *SessionChallenge, nextChallenge *SessionChallenge) error {
-	nonceLen := len(challenge.ChallengeNonce)
-	if challenge == nil ||
-		nonceLen < sessionNonceMin ||
-		nonceLen > sessionNonceMax {
-		return errors.New("Packet challenge was nil or of an invalid length.")
-	}
-	signedMsg, err := signature.NewSignedMessage(
-		signature.ESignedMessageHash_HASH_SHA256,
-		10,
-		&SessionChallengeResponse{
-			Challenge: challenge,
-			Identity:  c.config.LocalIdentity.Identity,
-		},
-		c.config.LocalIdentity.GetPrivateKey(),
-	)
-	if err != nil {
-		return err
-	}
-
-	return c.sendPacket(&SessionInitResponse{
-		Signature: signedMsg,
-		Challenge: nextChallenge,
-	})
-}
-
-// verifyChallengeResponse checks the challenge response.
-// Note: this is called on the server, so peerIdentity must be filled by this func.
-func (c *sessionControlState) verifyChallengeResponse(response *signature.SignedMessage) error {
-	// parse message first
-	resp := &SessionChallengeResponse{}
-	if err := proto.Unmarshal(response.Message, resp); err != nil {
-		return err
-	}
-	if resp.Challenge == nil {
-		return errors.New("Challenge response was empty.")
-	}
-	if resp.Identity == nil || len(resp.Identity.CertAsn1) < 1 {
-		return errors.New("Peer identity in challenge response not given.")
-	}
-
-	ident := identity.NewParsedIdentity(resp.Identity)
-	chain, err := ident.ParseCertificates()
-	if err != nil {
-		return err
-	}
-	if err := chain.Validate(c.config.CaCert); err != nil {
-		return err
-	}
-	if bytes.Compare(resp.Challenge.ChallengeNonce, c.challengeNonce) != 0 {
-		return fmt.Errorf("Challenge nonce did not match: %v != %v", resp.Challenge.ChallengeNonce, c.challengeNonce)
-	}
-
-	c.challengeNonce = nil
-	c.peerIdentity = ident
-	return nil
 }

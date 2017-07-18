@@ -13,23 +13,26 @@ func (i *CircuitInit) GetPacketType() packet.PacketType {
 }
 
 // PacketType returns the packet type of the stream init packet.
-func (i *CircuitPacket) GetPacketType() packet.PacketType {
-	return 2
-}
-
-// PacketType returns the packet type of the stream init packet.
 func (i *CircuitEstablished) GetPacketType() packet.PacketType {
 	return 3
 }
 
+// CircuitPacketType_InBand is the in_band packet type.
+var CircuitPacketType_InBand = packet.PacketType(9)
+
 func init() {
 	err := CircuitPacketIdentifier.AddPacketType(
-		func() packet.Packet { return &CircuitInit{} },
-		func() packet.Packet { return &CircuitEstablished{} },
-		func() packet.Packet { return &CircuitPacket{} },
-		func() packet.Packet { return &CircuitPeerLookupRequest{} },
-		func() packet.Packet { return &CircuitPeerLookupResponse{} },
+		func() packet.ProtoPacket { return &CircuitInit{} },
+		func() packet.ProtoPacket { return &CircuitEstablished{} },
+		func() packet.ProtoPacket { return &CircuitPeerLookupRequest{} },
+		func() packet.ProtoPacket { return &CircuitPeerLookupResponse{} },
 	)
+	if err == nil {
+		err = CircuitPacketIdentifier.AddRawPacketType(
+			// CircuitPacket packet type
+			CircuitPacketType_InBand,
+		)
+	}
 	if err != nil {
 		panic(err)
 	}

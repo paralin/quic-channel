@@ -79,7 +79,12 @@ func (u *UDPDiscoveryWorker) readPump(conn net.PacketConn) (pumpErr error) {
 
 	buf := make([]byte, 10000)
 	for {
-		interval := time.Duration(rand.Int63n(int64(discoveryMaxInterval-discoveryMinInterval))) + discoveryMinInterval
+		interval :=
+			discoveryMinInterval +
+				time.Duration( // Randomize the interval.
+					rand.Int63n(int64(discoveryMaxInterval-discoveryMinInterval)),
+				)
+
 		conn.SetReadDeadline(time.Now().Add(interval))
 		nread, addr, err := conn.ReadFrom(buf)
 		if err != nil {

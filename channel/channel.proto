@@ -1,0 +1,12 @@
+syntax = "proto3";
+package channel;
+
+// EStreamType are the types of Channel streams.
+enum EStreamType {
+  // Control stream, used for control messages.
+  STREAM_CONTROL = 0;
+  // Connection stream, used for connections over the stream.
+  STREAM_CONN_PROXY = 1;
+}
+
+// packet_type 1-3 used by handshake

@@ -3,9 +3,12 @@ package circuit
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 
+	"github.com/fuserobotics/quic-channel/conn"
 	"github.com/fuserobotics/quic-channel/identity"
+	"github.com/fuserobotics/quic-channel/packet"
 	"github.com/fuserobotics/quic-channel/peer"
 	"github.com/fuserobotics/quic-channel/route"
 	"github.com/fuserobotics/quic-channel/session"
@@ -29,7 +32,7 @@ type pendingCircuitIdentityLookup struct {
 func peerDbFromContext(c context.Context) (*peer.PeerDatabase, error) {
 	peerDbInter := c.Value("peerdb")
 	if peerDbInter == nil {
-		return nil, errors.New("Peer db not found in Context.")
+		return nil, errors.New("peer db not found in context")
 	}
 	return peerDbInter.(*peer.PeerDatabase), nil
 }
@@ -37,7 +40,7 @@ func peerDbFromContext(c context.Context) (*peer.PeerDatabase, error) {
 // handleRouteProbe handles incoming route probes from peers.
 func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 	if pkt.Route == nil {
-		return errors.New("Circuit probe route was empty.")
+		return errors.New("circuit probe route was empty")
 	}
 
 	pr := route.BuildParsedRoute(pkt.Route)
@@ -92,7 +95,7 @@ func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 		}()
 		c.pendingPeerBouncesMtx.Unlock()
 
-		return c.config.PacketRw.WritePacket(&CircuitPeerLookupRequest{
+		return c.config.PacketRw.WriteProtoPacket(&CircuitPeerLookupRequest{
 			QueryNonce:    pend.nonce,
 			RequestedPeer: unidentifiedPeers,
 		})
@@ -205,6 +208,7 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 			}
 			nhop.BackwardInterface = backwardInterIdent
 			nhop.ForwardInterface = outgoingInterIdent
+
 			if err := rt.AddHop(nhop, c.config.LocalIdentity.GetPrivateKey()); err != nil {
 				return err
 			}
@@ -257,20 +261,39 @@ func (c *sessionControlState) handleCircuitTermination(
 		return err
 	}
 	if remotePeer == nil {
-		return errors.New("Remote peer is not identified.")
+		return errors.New("remote peer is not identified")
 	}
 
-	ch := make(chan []byte)
-	circ := newCircuit(
-		remotePeer,
-		localAddr,
-		remoteAddr,
-		ch,
-		est,
-		c.config.Session.GetInterface(),
+	// TODO: use correct context
+	pktWriteCh := make(chan *packet.RawPacket)
+	pktReadCh := make(chan *packet.RawPacket)
+	con := conn.NewChannelPacketConn(
+		c.context,
+		func(err error) {
+			// TODO: handle packet conn close
+		},
+		pktReadCh,
+		pktWriteCh,
+		&net.UDPAddr{IP: localAddr, Port: 0},
+		&net.UDPAddr{IP: remoteAddr, Port: 0},
 	)
 
-	circuitStream, err := c.config.Session.OpenStream(session.StreamType(EStreamType_STREAM_CIRCUIT))
+	// circuit probe just reached us, sending back a Establish.
+	circ := newCircuit(
+		c.context,
+		c.config.TLSConfig,
+		c.config.LocalIdentity,
+		remotePeer,
+		c.config.Session.GetInterface(),
+		con,
+		true,
+		c.config.Log,
+	)
+	go circ.ManageCircuit()
+
+	circuitStream, err := c.config.Session.OpenStream(
+		session.StreamType(EStreamType_STREAM_CIRCUIT),
+	)
 	if err != nil {
 		c.config.Log.WithError(err).Debug("Cannot open circuit stream")
 		return err
@@ -279,11 +302,12 @@ func (c *sessionControlState) handleCircuitTermination(
 	// todo: close circuitstream here if necessary
 	handler := circuitStream.(*circuitStreamHandler)
 	handler.initPkt = &CircuitInit{RouteEstablish: est}
-	if err := handler.config.PacketRw.WritePacket(handler.initPkt); err != nil {
+	if err := handler.config.PacketRw.WriteProtoPacket(handler.initPkt); err != nil {
 		return err
 	}
-	handler.SetPacketWriteChan(ch)
+	handler.SetPacketWriteChan(pktWriteCh)
 	handler.circuit = circ
+	handler.circuitReadChan = pktReadCh
 
 	c.config.Log.WithField("peer", remotePkh.MarshalHashIdentifier()).Debug("Built circuit")
 	return nil

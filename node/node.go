@@ -7,20 +7,21 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/netproto"
 	"github.com/fuserobotics/quic-channel/circuit"
 	"github.com/fuserobotics/quic-channel/discovery"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/peer"
-	"github.com/lucas-clemente/quic-go"
 )
 
 // NodeConfig is the configuration for a node.
 type NodeConfig struct {
 	// Context is the context for the node.
 	Context context.Context
+	// Protocol is the networking protocol to use, defaults to KCP.
+	Protocol netproto.Protocol
 	// TLSConfig is the configuration for the node's TLS.
 	TLSConfig *tls.Config
 	// CaCert is the certificate for the CA.
@@ -47,7 +48,8 @@ type circuitBuilderWrapper struct {
 // Node manages sessions with peers.
 type Node struct {
 	config             NodeConfig
-	listener           quic.Listener
+	protocol           netproto.Protocol
+	listener           netproto.Listener
 	childContext       context.Context
 	childContextCancel context.CancelFunc
 	sessionHandler     nodeSessionHandler
@@ -60,21 +62,19 @@ type Node struct {
 // ListenAddr tries to start listening on a port and starts discovery.
 func (n *Node) ListenAddr(lc *NodeListenConfig) error {
 	if n.listener != nil {
-		return errors.New("Can only call ListenAddr once!")
+		return errors.New("can only call ListenAddr once")
 	}
 
 	// start listeners
-	listener, err := quic.ListenAddr(
+	listener, err := n.protocol.Listen(
 		fmt.Sprintf(":%d", lc.Port),
-		&quic.Config{
-			TLSConfig: n.config.TLSConfig,
-		},
 	)
 	if err != nil {
 		return err
 	}
-	log.WithField("port", lc.Port).Debug("Listening")
 	n.listener = listener
+
+	log.WithField("port", lc.Port).Debug("Listening")
 	go n.listenPump()
 
 	n.discovery = discovery.NewDiscovery(discovery.DiscoveryConfig{
@@ -103,10 +103,16 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 		config:          *nc,
 		peerDb:          peer.NewPeerDatabase(),
 		circuitBuilders: make(map[*peer.Peer]*circuitBuilderWrapper),
+		protocol:        nc.Protocol,
 	}
+
 	nod.sessionHandler.Node = nod
 	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
 	nod.childContext = context.WithValue(nod.childContext, "peerdb", nod.peerDb)
+
+	if nod.protocol == nil {
+		nod.protocol = defaultNetworkingProtocol(nc.TLSConfig)
+	}
 
 	// TODO: load peerDb from cache
 	// for now insert ourselves later in this func
@@ -114,13 +120,13 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 	// build identity
 	var err error
 	if len(nc.TLSConfig.Certificates) != 1 {
-		return nil, errors.New("TLSConfig.Certificates must have a single certificate chain.")
+		return nil, errors.New("config: certificates must have a single certificate chain")
 	}
 
 	cert := nc.TLSConfig.Certificates[0]
 	rsaPrivate, ok := cert.PrivateKey.(*rsa.PrivateKey)
 	if !ok {
-		return nil, fmt.Errorf("Expected rsa private key, got: %#v", cert.PrivateKey)
+		return nil, fmt.Errorf("expected rsa private key, got %#v", cert.PrivateKey)
 	}
 
 	chain := make(identity.CertificateChain, len(cert.Certificate))
@@ -155,49 +161,34 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 	return nod, nil
 }
 
-// DialPeerAddr attempts to open a session with a peer.
-func (n *Node) DialPeerAddr(addr string) error {
+// DialPeer attempts to open a session with a peer.
+func (n *Node) DialPeer(addr string) error {
 	l := log.WithField("peer", addr)
 	l.Debug("Dialing")
-	session, err := quic.DialAddr(addr, &quic.Config{
-		TLSConfig: n.config.TLSConfig,
-	})
+	session, err := n.protocol.Dial(addr)
 	if err != nil {
 		l.WithError(err).Warn("Dial failed")
 		return err
 	}
 
-	return n.HandleSession(session, true)
-}
-
-// DialPeer attempts to open a session with a peer.
-func (n *Node) DialPeer(conn net.PacketConn, remoteAddr net.Addr, host string) error {
-	l := log.WithField("addr", remoteAddr.String())
-	session, err := quic.Dial(conn, remoteAddr, host, &quic.Config{
-		TLSConfig: n.config.TLSConfig,
-	})
-	if err != nil {
-		l.WithError(err).Warn("Dial with PacketConn failed")
-		return err
-	}
-
-	return n.HandleSession(session, true)
+	return n.HandleSession(session)
 }
 
 // HandleSession starts manging a incoming/outgoing session
-func (n *Node) HandleSession(sess quic.Session, initiator bool) error {
+func (n *Node) HandleSession(sess netproto.Session) error {
 	s, err := circuit.BuildCircuitSession(
 		n.childContext,
 		sess,
-		initiator,
 		&n.sessionHandler,
 		n.localIdentity,
 		n.config.CaCert,
+		n.config.TLSConfig,
 	)
 
 	if err != nil {
-		log.WithError(err).Warn("Dropped session")
-		sess.Close(err)
+		// log.WithError(err).Warn("Dropped session")
+		// sess.Close(err)
+		sess.Close()
 	} else {
 		s.GetOrPutData(2, func() interface{} {
 			return circuit.CircuitBuiltHandler(&n.sessionHandler)
@@ -256,11 +247,11 @@ func (n *Node) listenPump() (retErr error) {
 	}()
 
 	for {
-		sess, err := n.listener.Accept()
+		sess, err := n.listener.AcceptSession()
 		if err != nil {
 			return err
 		}
 
-		n.HandleSession(sess, false)
+		n.HandleSession(sess)
 	}
 }

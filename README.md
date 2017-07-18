@@ -119,14 +119,11 @@ Important optimization to make this low-latency:
  - When a new peer over an unseen interface is opened, re-emit the route builds through immediately.
  - This will reduce the latency of new routes being found in changing environments.
 
-The implementation of a channel / circuit:
+The implementation of a circuit:
 
  - Implement net.PacketConn over the circuit.
- - Make a net.PacketConn multiplexer
- - Use multiplexing over multiple Circuits with writing packets.
- - Out-of-order or dropped packets is OK! QUIC can handle it. But track packet loss and RTT.
- - Use in-band packets for statistics used for control flow. Interim steps in the Circuit will insert these packets as well.
- - Note: this might mess with the QUIC packet flow management code a bit. Ensure the difference in performance between circuits is low.
+ - Use out-of-band packets for statistics used for control flow. Interim steps in the Circuit will insert these packets as well.
+ - Use in-band packets to form an authenticated "circuit session" between the two peers over the hops.
 
 Uncategorized thoughts:
 
@@ -134,6 +131,7 @@ Uncategorized thoughts:
  - First task will be spitting the logic into multiple go packages so we can re-use the Quic session management code for different level sessions.
  - TURN vs STUN: over an internet route, encode information in Circuit Probes about STUN connection info. Use this as a secondary channel path.
  - Identify the interface a session is on. Make a reliable identifier for this (uint32 hash?).
+ - SNI should be the hash_identifier.mydomain.com - i.e. use some suffix, maybe from the CA?
 
 Peer tracking:
 
@@ -142,6 +140,16 @@ Peer tracking:
  - This can be analyzed to infer potential connectivity with a peer before actually making a route request.
  - Will also be useful for visualization.
  - Can also store Routes that we can then use later.
+ 
+## Packet Addressing
+
+Generally applications can be reachable through the network in the following ways:
+
+ - In **VPN** mode, bind to the ipv6 address on the host with a given port.
+ - In any mode, connect directly to the qvpn server and bind to a port. 
+ - In **VPN** mode, this will also check if the port is already bound, and bind to it to prevent other applications from binding to the port.
+ 
+This way we can advertise services to connect to even when we are not necessarily running in VPN mode.
 
 ## Packet Routing
 

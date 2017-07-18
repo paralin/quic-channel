@@ -122,27 +122,29 @@ func (cb *CircuitBuilder) BuilderWorker() error {
 				}
 				if circ.GetOutgoingInterface() == ci.GetOutgoingInterface() {
 					// Close the old duplicate circuit
-					go ci.Close()
+					// go ci.Close()
 				}
 			}
 			cb.circuits = append(cb.circuits, circ)
-			go circ.OnDone(func(c *Circuit) {
-				cb.circMtx.Lock()
-				defer cb.circMtx.Unlock()
+			/*
+				go circ.OnDone(func(c *Circuit) {
+					cb.circMtx.Lock()
+					defer cb.circMtx.Unlock()
 
-				go func() {
-					cb.circuitLost <- c
-				}()
+					go func() {
+						cb.circuitLost <- c
+					}()
 
-				for i, circ := range cb.circuits {
-					if circ == c {
-						cb.circuits[i] = cb.circuits[len(cb.circuits)-1]
-						cb.circuits[len(cb.circuits)-1] = nil
-						cb.circuits = cb.circuits[:len(cb.circuits)-1]
-						return
+					for i, circ := range cb.circuits {
+						if circ == c {
+							cb.circuits[i] = cb.circuits[len(cb.circuits)-1]
+							cb.circuits[len(cb.circuits)-1] = nil
+							cb.circuits = cb.circuits[:len(cb.circuits)-1]
+							return
+						}
 					}
-				}
-			})
+				})
+			*/
 			cb.circMtx.Unlock()
 		case c := <-cb.circuitLost:
 			// TODO:

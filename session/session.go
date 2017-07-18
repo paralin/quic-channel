@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -11,15 +12,14 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/netproto"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/fuserobotics/quic-channel/packet"
-	"github.com/lucas-clemente/quic-go"
-	"github.com/lucas-clemente/quic-go/protocol"
 )
 
 // handshakeTimeout is the time allowed for a handshake.
-var handshakeTimeout = time.Duration(3 * time.Second)
+var handshakeTimeout = 3 * time.Second
 
 // sessionIdCtr assigns an integer id to sessions for logging
 var sessionIdCtr int = 1
@@ -29,15 +29,15 @@ type Session struct {
 	id                int
 	context           context.Context
 	log               *log.Entry
-	initiator         bool
 	started           time.Time
 	manager           SessionManager
-	session           quic.Session
+	session           netproto.Session
 	pumpErrors        chan error
 	inactivityTimer   *time.Timer
 	inactivityTimeout time.Duration
 	localIdentity     *identity.ParsedIdentity
 	caCert            *x509.Certificate
+	tlsConfig         *tls.Config
 	inter             *network.NetworkInterface
 	closedCallbacks   []func(s *Session, err error)
 
@@ -45,7 +45,7 @@ type Session struct {
 	childContextCancel context.CancelFunc
 
 	streamHandlersMtx     sync.Mutex
-	streamHandlers        map[protocol.StreamID]StreamHandler
+	streamHandlers        map[uint32]StreamHandler
 	streamHandlerBuilders StreamHandlerBuilders
 
 	sessionDataMtx sync.Mutex
@@ -78,15 +78,15 @@ type SessionConfig struct {
 	// Context, when cancelled will close the session.
 	Context context.Context
 	// Session to wrap.
-	Session quic.Session
-	// Initiator if we are the initiator of the session.
-	Initiator bool
+	Session netproto.Session
 	// Stream handler builders
 	HandlerBuilders StreamHandlerBuilders
 	// Identity of the local node
 	LocalIdentity *identity.ParsedIdentity
 	// CaCertificate is the CA cert.
 	CaCertificate *x509.Certificate
+	// TLSConfig is the local TLS config.
+	TLSConfig *tls.Config
 }
 
 // NewSession builds a new session.
@@ -96,28 +96,28 @@ func NewSession(config SessionConfig) (*Session, error) {
 		started:               time.Now(),
 		context:               config.Context,
 		session:               config.Session,
-		initiator:             config.Initiator,
 		manager:               config.Manager,
 		inactivityTimeout:     handshakeTimeout,
 		streamHandlerBuilders: config.HandlerBuilders,
 		inactivityTimer:       time.NewTimer(handshakeTimeout),
 		pumpErrors:            make(chan error, 2),
 		sessionData:           make(map[uint32]interface{}),
-		streamHandlers:        make(map[protocol.StreamID]StreamHandler),
+		streamHandlers:        make(map[uint32]StreamHandler),
 		localIdentity:         config.LocalIdentity,
 		log:                   log.WithField("session", sessionIdCtr),
 		caCert:                config.CaCertificate,
+		tlsConfig:             config.TLSConfig,
 	}
 	sessionIdCtr++
 	if config.LocalIdentity == nil || config.LocalIdentity.GetPrivateKey() == nil {
-		return nil, errors.New("Local identity must be set with a private key.")
+		return nil, errors.New("local identity must be set with a private key")
 	}
 	localCertChain, err := config.LocalIdentity.ParseCertificates()
 	if err != nil {
 		return nil, err
 	}
 	if config.CaCertificate == nil {
-		return nil, errors.New("CA certificate must be given.")
+		return nil, errors.New("ca certificate must be given")
 	}
 	if err := localCertChain.Validate(config.CaCertificate); err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func NewSession(config SessionConfig) (*Session, error) {
 
 // IsInitiator returns if the session was initiated by the local host.
 func (s *Session) IsInitiator() bool {
-	return s.initiator
+	return s.session.Initiator()
 }
 
 // GetId gets the incremented ID of this session
@@ -211,12 +211,12 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 		return nil, err
 	}
 
-	streamId := stream.StreamID()
-	l = l.WithField("stream", uint32(streamId))
+	streamId := stream.ID()
+	l = l.WithField("stream", streamId)
 	l.Debug("Stream opened (by us)")
 
 	rw := packet.NewPacketReadWriter(stream)
-	err = rw.WritePacket(&StreamInit{StreamType: uint32(streamType)})
+	err = rw.WriteProtoPacket(&StreamInit{StreamType: uint32(streamType)})
 	if err != nil {
 		return nil, err
 	}
@@ -224,10 +224,11 @@ func (s *Session) OpenStream(streamType StreamType) (handler StreamHandler, err 
 	shConfig := s.buildBaseStreamHandlerConfig(true)
 	shConfig.Log = s.log.WithField("stream", uint32(streamId))
 	shConfig.Session = s
+	shConfig.NetSession = s.session
 	shConfig.PacketRw = rw
 	shConfig.Stream = stream
 
-	handler, err = handlerBuilder.BuildHandler(shConfig)
+	handler, err = handlerBuilder.BuildHandler(s.context, shConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -242,20 +243,21 @@ func (s *Session) buildBaseStreamHandlerConfig(initiator bool) *StreamHandlerCon
 	return &StreamHandlerConfig{
 		Initiator:     initiator,
 		Session:       s,
-		QuicSession:   s.session,
+		NetSession:    s.session,
 		LocalIdentity: s.localIdentity,
 		CaCert:        s.caCert,
+		TLSConfig:     s.tlsConfig,
 	}
 }
 
-// handleIncomingStream handles an incoming quic stream.
-func (s *Session) handleIncomingStream(stream quic.Stream) error {
-	l := s.log.WithField("stream", int(stream.StreamID()))
+// handleIncomingStream handles an incoming stream.
+func (s *Session) handleIncomingStream(stream netproto.Stream) error {
+	l := s.log.WithField("stream", stream.ID())
 
 	l.Debug("Stream opened")
 	rw := packet.NewPacketReadWriter(stream)
 	si := &StreamInit{}
-	_, err := rw.ReadPacket(func(packetType packet.PacketType) (packet.Packet, error) {
+	_, _, err := rw.ReadPacket(func(packetType packet.PacketType) (packet.ProtoPacket, error) {
 		if packetType != 1 {
 			return nil, fmt.Errorf("Expected packet type 1, got %d", packetType)
 		}
@@ -276,7 +278,7 @@ func (s *Session) handleIncomingStream(stream quic.Stream) error {
 	shConfig.PacketRw = rw
 	shConfig.Stream = stream
 
-	handler, err := handlerBuilder.BuildHandler(shConfig)
+	handler, err := handlerBuilder.BuildHandler(s.context, shConfig)
 	if err != nil {
 		return err
 	}
@@ -288,25 +290,32 @@ func (s *Session) handleIncomingStream(stream quic.Stream) error {
 }
 
 // runStreamHandler manages a stream handler.
-func (s *Session) runStreamHandler(handler StreamHandler, stream quic.Stream) {
-	id := stream.StreamID()
+func (s *Session) runStreamHandler(handler StreamHandler, stream netproto.Stream) {
+	id := stream.ID()
 	s.streamHandlersMtx.Lock()
-	s.streamHandlers[id] = handler
+	s.streamHandlers[uint32(id)] = handler
 	s.streamHandlersMtx.Unlock()
 
 	ctx, ctxCancel := context.WithCancel(s.childContext)
 	defer ctxCancel()
 
 	err := handler.Handle(ctx)
-	l := log.WithField("stream", uint32(id))
-	if err != nil && err != io.EOF {
+	l := s.log.WithField("stream", uint32(id))
+
+	select {
+	case <-s.childContext.Done():
+		return // Don't print or bother removing the stream handler when we're done with the session.
+	default:
+	}
+
+	if err != nil && err != io.EOF && err != context.Canceled {
 		l.WithError(err).Warn("Stream closed with error")
 	} else {
 		l.Debug("Stream closed")
 	}
 
 	s.streamHandlersMtx.Lock()
-	delete(s.streamHandlers, id)
+	delete(s.streamHandlers, uint32(id))
 	s.streamHandlersMtx.Unlock()
 
 	stream.Close()
@@ -372,34 +381,36 @@ func (s *Session) AddCloseCallback(cb func(s *Session, err error)) {
 func (s *Session) manageCloseConditions() (sessErr error) {
 	defer func() {
 		l := s.log
+		if sessErr != nil {
+			l = l.WithError(sessErr)
+		}
+		if s.childContextCancel != nil {
+			s.childContextCancel()
+		}
 		for _, cb := range s.closedCallbacks {
 			go cb(s, sessErr)
 		}
 		s.closedCallbacks = nil
-		if sessErr != nil {
-			l = l.WithError(sessErr)
-		}
 		if s.session != nil {
-			s.session.Close(sessErr)
+			// s.session.Close(sessErr)
+			s.session.Close()
 		}
 		if s.manager != nil {
 			s.manager.OnSessionClosed(s, sessErr)
-		}
-		if s.childContextCancel != nil {
-			s.childContextCancel()
 		}
 		l.Debug("Session closed")
 	}()
 
 	s.log.
 		WithField("addr", s.session.RemoteAddr().String()).
-		WithField("initiator", s.initiator).
+		WithField("initiator", s.session.Initiator()).
 		Debug("Session started")
+
 	select {
 	case <-s.context.Done():
 		return context.Canceled
-	case <-s.inactivityTimer.C:
-		return errors.New("Inactivity timeout reached.")
+	//case <-s.inactivityTimer.C: TODO: re-enable inactivity timeout
+	// 	return errors.New("inactivity timeout reached")
 	case err := <-s.pumpErrors:
 		return err
 	}

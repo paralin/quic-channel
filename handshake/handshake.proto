@@ -1,12 +1,10 @@
 syntax = "proto3";
-package circuit;
+package handshake;
 
-import "github.com/fuserobotics/quic-channel/route/route.proto";
 import "github.com/fuserobotics/quic-channel/identity/identity.proto";
 import "github.com/fuserobotics/quic-channel/signature/signature.proto";
 
 // SessionInitChallenge challenges the client with a salt.
-// packet_type: 2
 message SessionInitChallenge {
   // Timestamp is the time the server began the session.
   // In case of a dispute, the oldest session will be kept.
@@ -16,7 +14,6 @@ message SessionInitChallenge {
 }
 
 // SessionInitResponse responds to the SessionInitChallenge.
-// packet_type: 3, third message in first control stream.
 message SessionInitResponse {
   // Signature is the signed SessionChallengeResponse, usually with a salt.
   signature.SignedMessage signature = 1;
@@ -37,7 +34,3 @@ message SessionChallengeResponse {
   // Identity is the identity of the peer.
   identity.Identity identity = 2;
 }
-
-// ControlKeepAlive is a keep alive packet.
-// packet_type: 4, sent periodically to hold the conn open.
-message KeepAlive {}

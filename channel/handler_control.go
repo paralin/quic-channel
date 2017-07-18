@@ -1,4 +1,4 @@
-package circuit
+package channel
 
 import (
 	"context"
@@ -12,21 +12,24 @@ type controlStreamHandlerBuilder struct{}
 
 // BuildHandler constructs the control stream handler.
 func (b *controlStreamHandlerBuilder) BuildHandler(ctx context.Context, config *session.StreamHandlerConfig) (session.StreamHandler, error) {
+	sessConfig := ctx.Value("channelSessionConfig").(*ChannelSessionConfig)
 	return &controlStreamHandler{
-		config: config,
+		config:     config,
+		sessConfig: sessConfig,
 	}, nil
 }
 
 // controlStreamHandler manages control stream messages.
 type controlStreamHandler struct {
-	config *session.StreamHandlerConfig
+	config     *session.StreamHandlerConfig
+	sessConfig *ChannelSessionConfig
 }
 
 // Handle manages the control stream.
 func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	config := h.config
 	state := config.Session.GetOrPutData(1, func() interface{} {
-		state := newSessionControlState(ctx, config)
+		state := newSessionControlState(ctx, config, h.sessConfig)
 		if !config.Session.IsInitiator() {
 			state.initTimestamp = config.Session.GetStartTime()
 		}

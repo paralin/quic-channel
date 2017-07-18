@@ -33,9 +33,9 @@ var NodeCommand = cli.Command{
 			Destination: &nodeArgs.ListenPort,
 		},
 		cli.IntFlag{
-			Name:        "bcast, b",
-			Usage:       "Port to use for UDP discovery broadcasts.",
-			Value:       2211,
+			Name:  "bcast, b",
+			Usage: "Port to use for UDP discovery broadcasts.",
+			// Value:       2211, // do not listen on default for now
 			Destination: &nodeArgs.BcastPort,
 		},
 		cli.StringSliceFlag{
@@ -98,7 +98,7 @@ var NodeCommand = cli.Command{
 		}
 
 		for _, peer := range nodeArgs.PeerAddr {
-			go n.DialPeerAddr(peer)
+			go n.DialPeer(peer)
 		}
 
 		for _, peer := range nodeArgs.CircuitPeer {

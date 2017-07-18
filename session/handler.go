@@ -2,12 +2,13 @@ package session
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/fuserobotics/netproto"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/packet"
-	"github.com/lucas-clemente/quic-go"
 )
 
 // StreamType is the type of stream.
@@ -29,22 +30,24 @@ type StreamHandlerConfig struct {
 	Log *log.Entry
 	// Session is the session for the stream.
 	Session *Session
-	// QuicSession is the underlying Quic session.
-	QuicSession quic.Session
+	// NetSession is the underlying network session.
+	NetSession netproto.Session
 	// Stream to handle.
-	Stream quic.Stream
+	Stream netproto.Stream
 	// Packet Read/Writer
 	PacketRw *packet.PacketReadWriter
 	// Local identity, with private key.
 	LocalIdentity *identity.ParsedIdentity
 	// CaCert is the CA certificate.
 	CaCert *x509.Certificate
+	// TLSConfig is the local TLS config.
+	TLSConfig *tls.Config
 }
 
 // StreamHandlerBuilder constructs StreamHandlers.
 type StreamHandlerBuilder interface {
 	// BuildHandler constructs the handler,
-	BuildHandler(config *StreamHandlerConfig) (StreamHandler, error)
+	BuildHandler(ctx context.Context, config *StreamHandlerConfig) (StreamHandler, error)
 }
 
 // StreamHandlerBuilders is a map of stream type to stream handler.
