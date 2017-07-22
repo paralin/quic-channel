@@ -19,7 +19,7 @@ func (e *RouteEstablish) ParseRoute(ca *x509.Certificate) (*ParsedRoute, error) 
 
 	pr := BuildParsedRoute(ro)
 	if !pr.IsComplete(ca) {
-		return nil, errors.New("Cannot RouteEstablish without a complete route.")
+		return nil, errors.New("cannot RouteEstablish without a complete route")
 	}
 
 	return pr, nil

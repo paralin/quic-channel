@@ -58,3 +58,4 @@ message CircuitEstablished {
 // KeepAlive is a keep alive packet.
 // control packet_type: 4, sent periodically to hold the conn open.
 message KeepAlive {}
+

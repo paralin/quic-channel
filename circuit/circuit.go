@@ -33,6 +33,7 @@ type Circuit struct {
 	tlsConfig     *tls.Config
 	localIdentity *identity.ParsedIdentity
 	caCert        *x509.Certificate
+	builtHandler  CircuitBuiltHandler
 
 	session netproto.Session
 
@@ -49,6 +50,7 @@ func newCircuit(
 	peer *peer.Peer,
 	outgoingInter *network.NetworkInterface,
 	packetConn network.BoundPacketConn,
+	builtHandler CircuitBuiltHandler,
 	// If we are the initiator, then we sent the Establish message.
 	initiator bool,
 	log *log.Entry,
@@ -62,6 +64,7 @@ func newCircuit(
 		tlsConfig:       localTLSConfig,
 		localIdentity:   localIdentity,
 		caCert:          caCert,
+		builtHandler:    builtHandler,
 	}
 
 	if !peer.IsIdentified() {
@@ -119,7 +122,13 @@ func (c *Circuit) ManageCircuit() (retErr error) {
 	channelSess.AddCloseCallback(func(s *session.Session, err error) {
 		retErrCh <- err
 	})
-	return <-retErrCh
+
+	select {
+	case <-c.ctx.Done():
+		return context.Canceled
+	case err := <-retErrCh:
+		return err
+	}
 }
 
 // establishSession dials or listens for the incoming session.

@@ -11,6 +11,8 @@ message Route {
   // Destination is the destination of the route.
   // Source can be inferred from the first hop.
   identity.PeerIdentifier destination = 2;
+  // ExpirationTimestamp of the route.
+  uint64 expiration_timestamp = 3;
 
   // Hop is a hop in the probe route.
   message Hop {

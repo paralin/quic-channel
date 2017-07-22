@@ -1,4 +1,5 @@
 # QUIC Channel
+
 ## Introduction
 
 QUIC Channel streams network traffic over the QUIC routing protocol. Reasoning:
@@ -16,9 +17,8 @@ This repo is currently considered an experiment and is likely to change drastica
 The daemon expects the following files to be given:
 
  - **ca.crt**: a single certificate, used as the root.
- - **cert.crt**: one or more certificates, first cert is the server cert,
-   previous are intermediates.
- - **key.pem**: private key for the last certificate in the cert.crt.
+ - **cert.crt**: one or more certificates, first cert is the server cert, previous are intermediates.
+ - **key.pem**: private key for the first certificate in the cert.crt.
 
 ## Connectivity
 
@@ -33,16 +33,12 @@ There are several planned interfaces to the router implementation:
 The concepts in this repo are summarized:
 
  - **Node**: implementation of a node in the network. Listener and dialer.
- - **Channel**: a QUIC session between two peers, transported over one or more circuits.
  - **Connection**: a one-hop path between two peers. In some cases, the internet is used as a single hop.
- - **Discovery**: discovers connections to peers with UDP broadcast and uses a list of target peers for STUN/TURN negotiation.
- - **Session**: a conversation over a connection, distinct between different links (WiFi, Ethernet, etc).
- - **Stream**: a two-way conversation in a session.
- - **Control Stream**: the first stream opened in a session, used for passing out-of-band messages.
- - **Circuit**: a series of streams between peers forming a path between two peers.
- - **Circuit Stream**: a stream implementing a circuit.
+ - **Circuit**: a combination of multiple connections between peers to form a multi-hop path from a source to a destination.
+ - **Channel**: a QUIC session between two peers, transported over a circuit.
+ - **Discovery**: discovers connections to peers and uses a list of target peers for STUN/TURN negotiation.
 
-In-band and out-of-band control packets are encoded with Protobuf.
+Out-of-band control packets and headers are encoded with Protobuf.
 
 ## Routing
 
@@ -61,76 +57,17 @@ Choice #2 here is the optimal choice for performance, but poor for security, as 
 
 The routing algorithm works like this:
 
- - Gossip probes through the connection graph building pending circuits outwards.
- - The memory and bandwidth overhead of maintaining a circuit is reduced due to the on-demand and short lived nature of circuits.
+ - Gossip probes through the connection graph building routes between peers.
+ - Probes are kept in memory of the peers until their expiration time (on the order of seconds to minutes) and repeated to peers that have not yet seen the probe.
  - Circuits can have further probing restrictions, like avoiding different types of network partitions (entering a network pocket, for example).
- - When a probe reaches a termination (dead-end) a message is sent in the reverse direction to indicate that this link is a dead-end.
- - When all probes return with dead-end status to the originator an ICMP not-reachable state can be realized.
- - The target of the circuit establishes incoming routes.
-
-The gossip algorithm works like:
-
- - Imagine the network as a graph of connections between nodes.
- - When attempting to make a connection to a peer, a node issues a route build request.
- - This request is gossiped to all connected peers.
- - Each peer adds its own identifier to the chain, and passes the request on.
- - Requests are terminated when there are no peers to gossip to that are not already in the chain.
- - When the target receives the request, it immediately establishes a channel back the opposite direction.
+ - The target of the circuit takes circuit probes and establishes the circuit with a CircuitEstablish message.
+ - TURN vs STUN: over an internet route, encode information in Circuit Probes about STUN connection info. Use this as a secondary channel path.
 
 The general rules are:
 
  - Never re-transmit a route probe to a peer that appears in the probe's existing path.
  - Drop incoming probes that already contain the local peer.
-
-In this case, the chain from `peer1` to `peer4` is the same. The metric messages from `peer4` should not be duplicated over multiple connections.
-
-Circuits can be in the following states:
-
- - PENDING - The circuit path is being built, and will expire quickly if not established.
- - ESTABLISHED - The circuit path is established, and being used. Expires in a longer period of time.
-
-In the code we have the control scheme:
-
- - The **Node** manages a **Discovery** that manages **Peer** in a database of last seen events and discovery events.
- - The **Node** builds a **CircuitSession** with **Peer** on the local network.
- - The **CircuitSession** manages communications with the peer, and emits **Circuit** for incoming valid circuit build operations.
- - The **CircuitBuilder** is built and managed by the **Node**.
- - The **CircuitBuilder** is responsible for emitting route probes, storing possible routes to a peer...
- - The **Channel** type is built and managed by the **Node**.
- - The **Channel** type manages multiplexing a buffered read/writer over the available circuits to a peer.
- - The **Circuit** is instantiated when a **Circuit Probe** comes back with a valid remote circuit.
-
-The implementation of the circuit builder:
-
- - Track opened circuits. If there are none of good enough metric, emit route build requests.
- - Emit these requests periodically, with a random period of 25s<->40s.
- - When a circuit is opened to the local host, the circuit builder handles it.
-
-There are two kinds of routes we can store in memory and attempt to re-use later (and maybe swap to disk):
-
- - **route.Route**: a complete route with us as the destination. Emit a CircuitInit with a empty RouteEstablish to use.
- - **route.RouteEstablish**: a complete RouteEstablish with us as the originator.
-
-When negotiating a new circuit, if the destination detects the originator used a new RouteEstablish, it will pack the complete RouteEstablish into a message and send it down the circuit back to the originator.
-
-Important optimization to make this low-latency:
-
- - Keep in memory the route probes we've witnessed in the last minute (?)
- - When a new peer over an unseen interface is opened, re-emit the route builds through immediately.
- - This will reduce the latency of new routes being found in changing environments.
-
-The implementation of a circuit:
-
- - Implement net.PacketConn over the circuit.
- - Use out-of-band packets for statistics used for control flow. Interim steps in the Circuit will insert these packets as well.
- - Use in-band packets to form an authenticated "circuit session" between the two peers over the hops.
-
-Uncategorized thoughts:
-
- - Pending circuits could be given an expiry timestamp, which can be used as an upper bound for latency between two hosts.
- - First task will be spitting the logic into multiple go packages so we can re-use the Quic session management code for different level sessions.
- - TURN vs STUN: over an internet route, encode information in Circuit Probes about STUN connection info. Use this as a secondary channel path.
- - Identify the interface a session is on. Make a reliable identifier for this (uint32 hash?).
+ - For connection quality estimation packets, track which peers have knowledge of the local link quality, and send metric messages on circuits that have best coverage of the target peers.
  - SNI should be the hash_identifier.mydomain.com - i.e. use some suffix, maybe from the CA?
 
 Peer tracking:
@@ -141,6 +78,28 @@ Peer tracking:
  - Will also be useful for visualization.
  - Can also store Routes that we can then use later.
  
+## Probe Handling
+
+When we receive a route probe, the general logic looks like:
+
+ - Verify the probe and attempt to insert it into the probe table
+ - Check to see if the probe is already in the table, if so update the expiration time
+ 
+The probe table queries we might ask are:
+
+ - Does this probe already exist in the table? (use a hash of the route as a uuid)
+ 
+At startup we need to cycle through the table registering expiration timers.
+ 
+## Failure Recovery
+
+We must aim to minimize the number of packets sent over the network for routing. This is done by optimizing how network changes are handled:
+ 
+ - Route probes have a expiration time
+ - Route probes are kept in memory, and re-transmitted over new peer connections when they become available.
+ - 
+ 
+ 
 ## Packet Addressing
 
 Generally applications can be reachable through the network in the following ways:
@@ -150,6 +109,14 @@ Generally applications can be reachable through the network in the following way
  - In **VPN** mode, this will also check if the port is already bound, and bind to it to prevent other applications from binding to the port.
  
 This way we can advertise services to connect to even when we are not necessarily running in VPN mode.
+
+## PeerDB Cache
+
+The peer database should act like a write-through cache. When a peer lookup occurs, the system should:
+
+ - Search the in-memory cache for the peer.
+ - Search the BoltDB database for the peer. If found, load into cache.
+ - Add the peer to the cache / db.
 
 ## Packet Routing
 
@@ -209,8 +176,7 @@ This structure allows a few things:
 
 ## Gossip Replacement for Serf
 
-QuicChannel (should be renamed) already is capable of the same features
-as Serf - in particular:
+QuicChannel (should be renamed) already is capable of the same features as Serf - in particular:
 
  - **Peer state tracking**: using observed route build packets, can
    maintain a "last seen" time for all observed peers.

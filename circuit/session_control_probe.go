@@ -30,14 +30,67 @@ type pendingCircuitIdentityLookup struct {
 
 // peerDbFromContext gets the peerdb from Context
 func peerDbFromContext(c context.Context) (*peer.PeerDatabase, error) {
-	peerDbInter := c.Value("peerdb")
+	peerDbInter := c.Value(peer.PeerDatabaseMarker)
 	if peerDbInter == nil {
 		return nil, errors.New("peer db not found in context")
 	}
 	return peerDbInter.(*peer.PeerDatabase), nil
 }
 
-// handleRouteProbe handles incoming route probes from peers.
+// transmitExistingProbes re-transmits probes from the probe table.
+func (c *sessionControlState) transmitExistingProbes() (retErr error) {
+	defer func() {
+		if retErr != nil {
+			c.config.Log.WithError(retErr).Warn("Unable to transmit existing route probes")
+		}
+	}()
+
+	if c.probeTable == nil {
+		return errors.New("probe table not given in session context")
+	}
+
+	routes, err := c.probeTable.LookupProbes(c.peerIdentity)
+	if err != nil || len(routes) == 0 {
+		return err
+	}
+
+	for _, rt := range routes {
+		if err := c.transmitRouteProbe(rt); err != nil {
+			return err
+		}
+	}
+
+	c.config.Log.WithField("probes", len(routes)).Debug("Re-transmitted known active route probes")
+	return nil
+}
+
+// transmitRouteProbe transmits a route probe.
+func (c *sessionControlState) transmitRouteProbe(rt *route.ParsedRoute) error {
+	peerIdentifier, err := c.peerIdentity.ToPartialPeerIdentifier()
+	if err != nil {
+		return err
+	}
+
+	outgoingInter := c.config.Session.GetInterface()
+	outgoingInterIdent := outgoingInter.Identifier()
+
+	nhop := route.NewHop(peerIdentifier)
+	nhop.Identity, err = c.config.LocalIdentity.ToPartialPeerIdentifier()
+	if err != nil {
+		return err
+	}
+	nhop.BackwardInterface = rt.GetIncomingInterface()
+	nhop.ForwardInterface = outgoingInterIdent
+
+	nrt := rt.Route.Clone()
+	if err := nrt.AddHop(nhop, c.config.LocalIdentity.GetPrivateKey()); err != nil {
+		return err
+	}
+
+	return c.sendPacket(&CircuitProbe{Route: nrt})
+}
+
+// handleCircuitProbe handles incoming route probes from peers.
 func (c *sessionControlState) handleCircuitProbe(pkt *CircuitProbe) error {
 	if pkt.Route == nil {
 		return errors.New("circuit probe route was empty")
@@ -122,6 +175,11 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 		return err
 	}
 
+	nextPeerPkh, err := c.peerIdentity.HashPublicKey()
+	if err != nil {
+		return err
+	}
+
 	peerDb, err := peerDbFromContext(c.context)
 	if err != nil {
 		return err
@@ -143,6 +201,15 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 	// Instead of wasting memory, we will re-use the same route over and over.
 	outgoingMessage := CircuitProbe{Route: pkt.Route}
 
+	// Register the probe in the probe table
+	peerPeer, err := peerDb.ByPartialHash((*nextPeerPkh)[:])
+	if err != nil {
+		return err
+	}
+	if c.probeTable.AddProbe(peerPeer, backwardInterIdent, pr) {
+		return errors.New("existing unexpired identical probe exists")
+	}
+
 	// For peer in connected peers...
 	peerDb.ForEachPeer(func(p *peer.Peer) (peerErr error) {
 		pl := l.WithField("peer", p.GetIdentifier())
@@ -155,6 +222,11 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 
 		peerIdent := p.GetIdentity()
 		if peerIdent == nil {
+			return nil
+		}
+
+		if peerIdent.CompareTo(c.peerIdentity) {
+			peerPeer = p
 			return nil
 		}
 
@@ -279,6 +351,12 @@ func (c *sessionControlState) handleCircuitTermination(
 		&net.UDPAddr{IP: remoteAddr, Port: 0},
 	)
 
+	var circHandler CircuitBuiltHandler
+	handlerInter := c.config.Session.GetOrPutData(2, nil)
+	if handlerInter != nil {
+		circHandler = handlerInter.(CircuitBuiltHandler)
+	}
+
 	// circuit probe just reached us, sending back a Establish.
 	circ := newCircuit(
 		c.context,
@@ -288,6 +366,7 @@ func (c *sessionControlState) handleCircuitTermination(
 		remotePeer,
 		c.config.Session.GetInterface(),
 		con,
+		circHandler,
 		true,
 		c.config.Log,
 	)
@@ -312,5 +391,12 @@ func (c *sessionControlState) handleCircuitTermination(
 	handler.circuitReadChan = pktReadCh
 
 	c.config.Log.WithField("peer", remotePkh.MarshalHashIdentifier()).Debug("Built circuit")
+
+	if circHandler != nil {
+		if err := circHandler.CircuitBuilt(circ); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

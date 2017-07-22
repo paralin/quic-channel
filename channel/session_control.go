@@ -106,9 +106,6 @@ func (c *sessionControlState) completeHandshake() error {
 	hashId := pkh.MarshalHashIdentifier()
 	c.config.Log = c.config.Log.WithField("peer", hashId)
 
-	// TODO: check against expected peer identity
-
-	c.config.Log.Debug("Session handshake complete")
 	return nil
 }
 

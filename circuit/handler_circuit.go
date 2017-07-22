@@ -21,6 +21,8 @@ import (
 type CircuitBuiltHandler interface {
 	// CircuitBuilt handles a new circuit. If returning err, will kill the circuit.
 	CircuitBuilt(c *Circuit) error
+	// ChannelBuilt handles a circuit channel being completed with a peer. If returning err, will kill the circuit and channel.
+	ChannelBuilt(c *Circuit, s *session.SessionReadyDetails) error
 }
 
 // circuitBuildTimeout is the circuit handshake timeout
@@ -35,7 +37,10 @@ var circuitInactivityTimeout = time.Duration(120) * time.Second
 type circuitStreamHandlerBuilder struct{}
 
 // BuildHandler constructs the circuit stream handler.
-func (b *circuitStreamHandlerBuilder) BuildHandler(ctx context.Context, config *session.StreamHandlerConfig) (session.StreamHandler, error) {
+func (b *circuitStreamHandlerBuilder) BuildHandler(
+	ctx context.Context,
+	config *session.StreamHandlerConfig,
+) (session.StreamHandler, error) {
 	return &circuitStreamHandler{
 		config:          config,
 		changeWriteChan: make(chan (<-chan *pkt.RawPacket), 1),
@@ -136,11 +141,10 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	}
 	pendingInit.parsedRoute = pr
 
-	peerDbInter := ctx.Value("peerdb")
-	if peerDbInter == nil {
-		return errors.New("peer db not given")
+	peerDb, err := peerDbFromContext(ctx)
+	if err != nil {
+		return err
 	}
-	peerDb := peerDbInter.(*peer.PeerDatabase)
 	pendingInit.peerDb = peerDb
 
 	hops, err := pr.DecodeHops(h.config.CaCert)
@@ -367,6 +371,12 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 			&net.UDPAddr{IP: peerAddr, Port: 0},
 		)
 
+		var handler CircuitBuiltHandler
+		handlerInter := h.config.Session.GetOrPutData(2, nil)
+		if handlerInter != nil {
+			handler = handlerInter.(CircuitBuiltHandler)
+		}
+
 		circ := newCircuit(
 			ctx,
 			h.config.TLSConfig,
@@ -375,6 +385,7 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 			peer,
 			pi.incomingSessionInterface,
 			pktConn,
+			handler,
 			false,
 			h.config.Log,
 		)
@@ -392,9 +403,8 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 		}
 
 		h.config.Log.Debug("Circuit finalized")
-		handlerInter := h.config.Session.GetOrPutData(2, nil)
-		if handlerInter != nil {
-			handler := handlerInter.(CircuitBuiltHandler)
+
+		if handler != nil {
 			if err := handler.CircuitBuilt(circ); err != nil {
 				return err
 			}
@@ -420,7 +430,11 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 	if peer.IsIdentified() {
 		peerIdent := peer.GetIdentity()
 		if !peerIdent.CompareTo(nextHopIdent) {
-			return fmt.Errorf("Matched peer %s but should have matched %s!", peer.GetIdentifier(), nextHopPkh.MarshalHashIdentifier())
+			return fmt.Errorf(
+				"matched peer %s but should have matched %s",
+				peer.GetIdentifier(),
+				nextHopPkh.MarshalHashIdentifier(),
+			)
 		}
 	} else {
 		if err := peer.SetIdentity(nextHopIdent); err != nil {

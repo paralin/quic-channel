@@ -11,6 +11,7 @@ import (
 	"github.com/fuserobotics/quic-channel/handshake"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/packet"
+	"github.com/fuserobotics/quic-channel/probe"
 	"github.com/fuserobotics/quic-channel/session"
 )
 
@@ -35,6 +36,8 @@ type sessionControlState struct {
 	pendingPeerBouncesMtx sync.Mutex
 	pendingPeerBouncesCtr int
 	pendingPeerBounces    map[uint32]*pendingCircuitIdentityLookup
+
+	probeTable *probe.ProbeTable
 }
 
 // newSessionControlState builds a new control state.
@@ -59,6 +62,7 @@ func newSessionControlState(
 			config.Session.IsInitiator(),
 		),
 		initTimestamp: time.Now(),
+		probeTable:    ctx.Value(probe.ProbeTableMarker).(*probe.ProbeTable),
 	}
 	s.activePacketHandler = s.handshaker.HandlePacket
 	return s
@@ -100,30 +104,30 @@ func (s *sessionControlState) handleControl() error {
 }
 
 // completeHandshake is called to complete the handshake sequence.
-func (c *sessionControlState) completeHandshake() error {
-	c.activePacketHandler = c.handleControlPacket
-	c.handshaker = nil
-	err := c.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{
-		Session:            c.config.Session,
-		InitiatedTimestamp: c.initTimestamp,
-		PeerIdentity:       c.peerIdentity,
+func (s *sessionControlState) completeHandshake() error {
+	s.activePacketHandler = s.handleControlPacket
+	s.handshaker = nil
+	err := s.config.Session.GetManager().OnSessionReady(&session.SessionReadyDetails{
+		Session:            s.config.Session,
+		InitiatedTimestamp: s.initTimestamp,
+		PeerIdentity:       s.peerIdentity,
 	})
 	if err != nil {
 		return err
 	}
 
-	c.config.Session.ResetInactivityTimeout(inactivityTimeout)
-	c.keepAliveTimer.Reset(keepAliveFrequency)
+	s.config.Session.ResetInactivityTimeout(inactivityTimeout)
+	s.keepAliveTimer.Reset(keepAliveFrequency)
 
-	pkh, err := c.peerIdentity.HashPublicKey()
+	pkh, err := s.peerIdentity.HashPublicKey()
 	if err != nil {
 		return err
 	}
-	hashId := pkh.MarshalHashIdentifier()
-	c.config.Log = c.config.Log.WithField("peer", hashId)
+	hashID := pkh.MarshalHashIdentifier()
+	s.config.Log = s.config.Log.WithField("peer", hashID)
 
-	c.config.Log.Debug("Session handshake complete")
-	return nil
+	// Transmit route probes.
+	return s.transmitExistingProbes()
 }
 
 // handleControlPacket handles packets after the handshake is complete.
@@ -134,11 +138,10 @@ func (c *sessionControlState) handleControlPacket(packet packet.Packet) error {
 	case *CircuitProbe:
 		return c.handleCircuitProbe(pkt)
 	case *CircuitPeerLookupResponse:
-		fmt.Printf("Got lookup response %#v\n", *pkt)
 		nonce := pkt.QueryNonce
 		pend := c.pendingPeerBounces[nonce]
 		if pend == nil {
-			return errors.New("Received peer lookup response after request had timed out.")
+			return errors.New("received peer lookup response after request had timed out")
 		}
 		pend.timeoutCancel()
 		c.pendingPeerBouncesMtx.Lock()

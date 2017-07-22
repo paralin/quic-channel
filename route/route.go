@@ -3,9 +3,11 @@ package route
 import (
 	"bytes"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/signature"
@@ -17,7 +19,8 @@ import (
 type ParsedRoute struct {
 	*Route
 
-	routeHops RouteHops
+	routeHops     RouteHops
+	incomingInter uint32
 }
 
 // NewParsedRoute builds a new ParsedRoute.
@@ -37,6 +40,16 @@ func (p *ParsedRoute) Reset() {
 	p.Route.Reset()
 }
 
+// GetIncomingInterface gets the incoming interface.
+func (p *ParsedRoute) GetIncomingInterface() uint32 {
+	return p.incomingInter
+}
+
+// SetIncomingInterface sets the incoming interface.
+func (p *ParsedRoute) SetIncomingInterface(inter uint32) {
+	p.incomingInter = inter
+}
+
 // Verify attempts to parse and verify the entire route.
 func (p *ParsedRoute) Verify(ca *x509.Certificate, hopIdentities RouteHopIdentities) error {
 	hops, err := p.DecodeHops(ca)
@@ -45,7 +58,7 @@ func (p *ParsedRoute) Verify(ca *x509.Certificate, hopIdentities RouteHopIdentit
 	}
 
 	if p.Route.Destination == nil {
-		return errors.New("Route destination cannot be nil.")
+		return errors.New("route destination cannot be nil")
 	}
 	if err := p.Route.Destination.Verify(); err != nil {
 		return err
@@ -53,6 +66,10 @@ func (p *ParsedRoute) Verify(ca *x509.Certificate, hopIdentities RouteHopIdentit
 
 	if err := hops.Verify(ca, p.Hop, hopIdentities); err != nil {
 		return err
+	}
+
+	if ttl := p.TimeTillExpiration(); ttl < 0 {
+		return fmt.Errorf("probe expired %d seconds ago", ttl.Seconds())
 	}
 
 	return nil
@@ -279,6 +296,22 @@ func NewRoute() *Route {
 	return &Route{}
 }
 
+// TimeTillExpiration returns how far in the future the route will expire.
+func (r *Route) TimeTillExpiration() time.Duration {
+	ts := timestamp.TimestampToTime(r.ExpirationTimestamp)
+	now := time.Now()
+	diff := ts.Sub(now)
+
+	// TODO: additional logic to deal with out of sync clocks
+
+	return diff
+}
+
+// SetExpirationTime updates the expiration timestamp.
+func (r *Route) SetExpirationTime(t time.Time) {
+	r.ExpirationTimestamp = timestamp.TimeToTimestamp(t)
+}
+
 // HashRouteSegments returns the hash of the route segments.
 func (r *Route) HashRouteSegments() (*signature.DataHash, error) {
 	var segBuffer bytes.Buffer
@@ -288,7 +321,25 @@ func (r *Route) HashRouteSegments() (*signature.DataHash, error) {
 		}
 	}
 
-	return signature.NewDataHash(signature.ESignedMessageHash_HASH_SHA256, segBuffer.Bytes())
+	return signature.NewDataHash(
+		signature.ESignedMessageHash_HASH_SHA256,
+		segBuffer.Bytes(),
+	)
+}
+
+// RouteSegmentsSha1 is the sha1 hash of the segments.
+type RouteSegmentsSha1 [sha1.Size]byte
+
+// HashRouteSegmentsSha1 returns the sha1 hash of the route segments.
+func (r *Route) HashRouteSegmentsSha1() RouteSegmentsSha1 {
+	h := sha1.New()
+	for _, seg := range r.Hop {
+		h.Write(seg.Message)
+	}
+
+	var res [sha1.Size]byte
+	copy(res[:], h.Sum(nil))
+	return RouteSegmentsSha1(res)
 }
 
 // PopHop removes the last hop.
@@ -298,6 +349,14 @@ func (r *Route) PopHop() {
 	}
 
 	r.Hop = r.Hop[:len(r.Hop)-1]
+}
+
+// Clone clones the route.
+func (r *Route) Clone() *Route {
+	dat, _ := proto.Marshal(r)
+	nr := &Route{}
+	_ = proto.Unmarshal(dat, nr)
+	return nr
 }
 
 // AddHop adds a hop to the route.

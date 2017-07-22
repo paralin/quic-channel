@@ -60,8 +60,20 @@ func (h *nodeSessionHandler) CircuitBuilt(c *circuit.Circuit) error {
 		return errors.New("Circuit peer was nil.")
 	}
 
+	// builder := h.getCircuitBuilderForPeer(peer)
+	// builder.builder.AddCircuit(c)
+	return nil
+}
+
+// ChannelBuilt is called when a circuit channel is built.
+func (h *nodeSessionHandler) ChannelBuilt(c *circuit.Circuit, s *session.SessionReadyDetails) error {
+	peer := c.GetPeer()
+	if peer == nil {
+		return errors.New("circuit peer was nil")
+	}
+
 	builder := h.getCircuitBuilderForPeer(peer)
-	builder.builder.AddCircuit(c)
+	builder.builder.AddChannel(c, s.Session)
 	return nil
 }
 

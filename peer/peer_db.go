@@ -9,6 +9,9 @@ import (
 	"github.com/fuserobotics/quic-channel/identity"
 )
 
+// PeerDatabaseMarker is a marker on the context for the peer database.
+var PeerDatabaseMarker = new(struct{ peerDbMarker int })
+
 // PeerDatabase tracks known peers. Thread safe.
 type PeerDatabase struct {
 	mtx     sync.Mutex

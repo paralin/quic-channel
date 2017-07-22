@@ -9,13 +9,22 @@ import (
 )
 
 // NewSignedMessage builds and signs a message in one go.
-func NewSignedMessage(hashType ESignedMessageHash, saltLen int, message proto.Message, privateKey *rsa.PrivateKey) (*SignedMessage, error) {
+func NewSignedMessage(
+	hashType ESignedMessageHash,
+	saltLen int,
+	message proto.Message,
+	privateKey *rsa.PrivateKey,
+) (*SignedMessage, error) {
 	data, err := proto.Marshal(message)
 	if err != nil {
 		return nil, err
 	}
 
-	result := &SignedMessage{Message: data, SignatureSalt: make([]byte, saltLen), HashType: hashType}
+	result := &SignedMessage{
+		Message:       data,
+		SignatureSalt: make([]byte, saltLen),
+		HashType:      hashType,
+	}
 
 	if err := result.GenerateSalt(saltLen); err != nil {
 		return nil, err

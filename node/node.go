@@ -14,6 +14,7 @@ import (
 	"github.com/fuserobotics/quic-channel/discovery"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/peer"
+	"github.com/fuserobotics/quic-channel/probe"
 )
 
 // NodeConfig is the configuration for a node.
@@ -56,6 +57,7 @@ type Node struct {
 	discovery          *discovery.Discovery
 	localIdentity      *identity.ParsedIdentity
 	peerDb             *peer.PeerDatabase
+	probeTable         *probe.ProbeTable
 	circuitBuilders    map[*peer.Peer]*circuitBuilderWrapper
 }
 
@@ -95,8 +97,8 @@ func (n *Node) ListenAddr(lc *NodeListenConfig) error {
 
 // BuildNode builds a new node with a configuration.
 func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
-	if nc == nil || nc.TLSConfig == nil {
-		return nil, errors.New("NodeConfig, TLSConfig must be specified.")
+	if nc == nil || nc.TLSConfig == nil || nc.CaCert == nil {
+		return nil, errors.New("NodeConfig, TLSConfig, CaCert must be specified.")
 	}
 
 	nod = &Node{
@@ -108,7 +110,19 @@ func BuildNode(nc *NodeConfig) (nod *Node, reterr error) {
 
 	nod.sessionHandler.Node = nod
 	nod.childContext, nod.childContextCancel = context.WithCancel(nc.Context)
-	nod.childContext = context.WithValue(nod.childContext, "peerdb", nod.peerDb)
+	nod.childContext = context.WithValue(nod.childContext, peer.PeerDatabaseMarker, nod.peerDb)
+	nod.probeTable = probe.NewProbeTable(nod.childContext, nc.CaCert)
+	nod.childContext = context.WithValue(nod.childContext, probe.ProbeTableMarker, nod.probeTable)
+
+	go func() {
+		err := nod.probeTable.ManageProbeTable()
+		if err != context.Canceled {
+			log.WithError(err).Warn("Probe table exited with error")
+		} else {
+			log.Debug("Probe table exited")
+		}
+		nod.childContextCancel()
+	}()
 
 	if nod.protocol == nil {
 		nod.protocol = defaultNetworkingProtocol(nc.TLSConfig)
@@ -204,7 +218,7 @@ func (n *Node) getCircuitBuilderForPeer(p *peer.Peer) *circuitBuilderWrapper {
 	if builderWrapper == nil {
 		ctx, ctxCancel := context.WithCancel(n.childContext)
 		builderWrapper = &circuitBuilderWrapper{
-			builder: circuit.NewCircuitBuilder(ctx, p, n.peerDb, n.localIdentity),
+			builder: circuit.NewCircuitBuilder(ctx, p, n.peerDb, n.localIdentity, n.probeTable),
 			cancel:  ctxCancel,
 		}
 		n.circuitBuilders[p] = builderWrapper

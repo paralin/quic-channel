@@ -24,6 +24,7 @@ func (h *circuitSessionHandler) OnSessionReady(details *session.SessionReadyDeta
 		if err != nil {
 			return err
 		}
+
 		return fmt.Errorf(
 			"channel: expected peer %s but handshook with %s",
 			h.peer.GetIdentifier(),
@@ -36,7 +37,11 @@ func (h *circuitSessionHandler) OnSessionReady(details *session.SessionReadyDeta
 		WithField("peer", h.peer.GetIdentifier()).
 		Debug("Channel session ready")
 
-	return nil // TODO: peer.AddChannelSession(details.Session) ?
+	if h.builtHandler != nil {
+		return h.builtHandler.ChannelBuilt(h.Circuit, details)
+	}
+
+	return nil
 }
 
 // OnSessionClosed is called when a session is closed.

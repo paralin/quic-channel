@@ -57,6 +57,6 @@ func LookupHashFunction(hashType ESignedMessageHash) (hash.Hash, crypto.Hash, er
 	case ESignedMessageHash_HASH_SHA256:
 		return sha256.New(), crypto.SHA256, nil
 	default:
-		return nil, crypto.Hash(0), fmt.Errorf("Unknown hash kind %s\n", hashType.String())
+		return nil, crypto.Hash(0), fmt.Errorf("unknown hash kind %s", hashType.String())
 	}
 }
