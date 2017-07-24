@@ -15,6 +15,7 @@ import (
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/fuserobotics/quic-channel/peer"
+	"github.com/fuserobotics/quic-channel/route"
 	"github.com/fuserobotics/quic-channel/session"
 	"github.com/lucas-clemente/quic-go"
 )
@@ -29,6 +30,7 @@ type Circuit struct {
 	sessionHandler  circuitSessionHandler
 
 	peer          *peer.Peer
+	routeProbe    *route.ParsedRoute
 	outgoingInter *network.NetworkInterface
 	tlsConfig     *tls.Config
 	localIdentity *identity.ParsedIdentity
@@ -54,6 +56,7 @@ func newCircuit(
 	// If we are the initiator, then we sent the Establish message.
 	initiator bool,
 	log *log.Entry,
+	routeProbe *route.ParsedRoute,
 ) *Circuit {
 	c := &Circuit{
 		BoundPacketConn: packetConn,
@@ -65,6 +68,7 @@ func newCircuit(
 		localIdentity:   localIdentity,
 		caCert:          caCert,
 		builtHandler:    builtHandler,
+		routeProbe:      routeProbe,
 	}
 
 	if !peer.IsIdentified() {
@@ -80,6 +84,11 @@ func newCircuit(
 // GetOutgoingInterface returns the interface this circuit is attached to.
 func (c *Circuit) GetOutgoingInterface() *network.NetworkInterface {
 	return c.outgoingInter
+}
+
+// GetRoute returns the route.
+func (c *Circuit) GetRoute() *route.ParsedRoute {
+	return c.routeProbe
 }
 
 // GetPeer gets the circuit peer.

@@ -8,6 +8,7 @@ import (
 	"github.com/fuserobotics/quic-channel/circuit"
 	"github.com/fuserobotics/quic-channel/discovery"
 	"github.com/fuserobotics/quic-channel/session"
+	"github.com/fuserobotics/quic-channel/timestamp"
 )
 
 // nodeSessionHandler handles session callbacks.
@@ -72,7 +73,10 @@ func (h *nodeSessionHandler) ChannelBuilt(c *circuit.Circuit, s *session.Session
 		return errors.New("circuit peer was nil")
 	}
 
-	builder := h.getCircuitBuilderForPeer(peer)
+	builder := h.getCircuitBuilderForPeer(peer, true)
+	builder.builder.PreventProbesUntil(
+		timestamp.TimestampToTime(c.GetRoute().GetExpirationTimestamp()),
+	)
 	builder.builder.AddChannel(c, s.Session)
 	return nil
 }

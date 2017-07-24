@@ -26,14 +26,15 @@ type CircuitBuilder struct {
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 
-	peer       *peer.Peer
-	peerDb     *peer.PeerDatabase
-	probeTable *probe.ProbeTable
+	peer          *peer.Peer
+	peerDb        *peer.PeerDatabase
+	probeTable    *probe.ProbeTable
+	lastProbeTime time.Time
 
 	localIdentity *identity.ParsedIdentity
 
-	circuitLost  chan *Circuit
-	channelBuilt chan circuitSessionPair
+	channelBuilt    chan circuitSessionPair
+	setPreventUntil chan time.Time
 }
 
 // NewCircuitBuilder creates a CircuitBuilder from a peer.
@@ -50,7 +51,8 @@ func NewCircuitBuilder(
 		probeTable:    probeTable,
 		localIdentity: localIdentity,
 
-		channelBuilt: make(chan circuitSessionPair, 10),
+		channelBuilt:    make(chan circuitSessionPair, 10),
+		setPreventUntil: make(chan *time.Time, 1), // important that this is buffered with 1
 	}
 	cb.ctx, cb.ctxCancel = context.WithCancel(ctx)
 	return cb
@@ -64,33 +66,69 @@ func (cb *CircuitBuilder) AddChannel(circ *Circuit, s *session.Session) {
 	}
 }
 
+// PreventProbesUntil prevents route probes until a set time.
+func (cb *CircuitBuilder) PreventProbesUntil(t time.Time) {
+	select {
+	case <-cb.ctx.Done():
+	case cb.setPreventUntil <- t:
+	}
+}
+
+// resetProbeTimer resets the probeTimer to the correct timing.
+func (cb *CircuitBuilder) resetProbeTimer(timer *time.Timer, minimumNextProbe time.Time) {
+	now := time.Now()
+	nextProbe := now
+	if !cb.lastProbeTime.IsZero() {
+		timeTillNext := probePeriod - (now.Sub(cb.lastProbeTime))
+		if timeTillNext > 0 {
+			nextProbe = nextProbe.Add(timeTillNext)
+		}
+	}
+	if nextProbe.Before(minimumNextProbe) {
+		nextProbe = minimumNextProbe
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(nextProbe.Sub(now))
+}
+
 // BuilderWorker manages the CircuitBuilder.
-func (cb *CircuitBuilder) BuilderWorker() error {
+func (cb *CircuitBuilder) BuilderWorker(emitInitial bool) error {
+	var preventUntil time.Time
 	probeTimer := time.NewTimer(probePeriod)
-	probeTimer.Stop()
 	log.WithField("peer", cb.peer.GetIdentifier()).Debug("Circuit builder started")
 
-	cb.emitCircuitProbe()
+	if emitInitial {
+		cb.emitCircuitProbe()
+	}
 	for {
 		select {
 		case <-cb.ctx.Done():
 			return context.Canceled
+		case nt := <-cb.setPreventUntil:
+			if nt.After(preventUntil) {
+				preventUntil = nt
+				cb.resetProbeTimer(probeTimer, preventUntil)
+			}
 		case _ = <-cb.channelBuilt:
 			// TODO: do something once we build a channel.
-		case _ = <-cb.circuitLost:
-			// TODO: do something once we lose a channel.
 		case <-probeTimer.C:
 			probeTimer.Stop()
 			if err := cb.emitCircuitProbe(); err != nil {
 				return err
 			}
-			probeTimer.Reset(probePeriod)
+			cb.resetProbeTimer(probeTimer, preventUntil)
 		}
 	}
 }
 
 // emitCircuitProbe transmits a new circuit probe.
 func (cb *CircuitBuilder) emitCircuitProbe() error {
+	cb.lastProbeTime = time.Now()
 	probe := route.NewRoute()
 	probe.SetExpirationTime(time.Now().Add(probePeriod).Add(time.Duration(-2) * time.Second))
 	probe.Destination = &identity.PeerIdentifier{

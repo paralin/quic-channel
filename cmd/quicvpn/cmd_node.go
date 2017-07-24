@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"time"
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/cmd/quicvpn/tls"
@@ -89,12 +88,6 @@ var NodeCommand = cli.Command{
 		})
 		if err != nil {
 			return err
-		}
-
-		select {
-		case err := <-exitCh:
-			return err
-		case <-time.After(time.Duration(1) * time.Second):
 		}
 
 		for _, peer := range nodeArgs.PeerAddr {

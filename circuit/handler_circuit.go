@@ -388,6 +388,7 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 			handler,
 			false,
 			h.config.Log,
+			pi.parsedRoute,
 		)
 		h.SetPacketWriteChan(pktWriteCh)
 		h.circuit = circ

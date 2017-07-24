@@ -213,7 +213,7 @@ func (n *Node) HandleSession(sess netproto.Session) error {
 }
 
 // getCircuitBuilderForPeer ensures there is a circuit builder for a peer.
-func (n *Node) getCircuitBuilderForPeer(p *peer.Peer) *circuitBuilderWrapper {
+func (n *Node) getCircuitBuilderForPeer(p *peer.Peer, emitInitialProbe bool) *circuitBuilderWrapper {
 	builderWrapper := n.circuitBuilders[p]
 	if builderWrapper == nil {
 		ctx, ctxCancel := context.WithCancel(n.childContext)
@@ -223,7 +223,7 @@ func (n *Node) getCircuitBuilderForPeer(p *peer.Peer) *circuitBuilderWrapper {
 		}
 		n.circuitBuilders[p] = builderWrapper
 		go func() {
-			err := builderWrapper.builder.BuilderWorker()
+			err := builderWrapper.builder.BuilderWorker(emitInitialProbe)
 			ctxCancel()
 			delete(n.circuitBuilders, p)
 			if err != nil {
@@ -245,7 +245,7 @@ func (n *Node) BuildCircuit(peerId *identity.PeerIdentifier) error {
 		return err
 	}
 
-	n.getCircuitBuilderForPeer(peer)
+	n.getCircuitBuilderForPeer(peer, true)
 	return nil
 }
 

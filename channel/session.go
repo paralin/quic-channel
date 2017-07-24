@@ -10,6 +10,9 @@ import (
 	"github.com/fuserobotics/quic-channel/session"
 )
 
+// ChannelSessionMarker is used as the key for ChannelSessions on the peer.
+var ChannelSessionMarker struct{ channelSessionMarker uint32 }
+
 // ChannelSessionConfig configures a channel session.
 type ChannelSessionConfig struct {
 	// ExpectedPeerIdentity is the identity of the target peer.

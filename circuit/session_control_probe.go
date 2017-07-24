@@ -369,6 +369,7 @@ func (c *sessionControlState) handleCircuitTermination(
 		circHandler,
 		true,
 		c.config.Log,
+		pr,
 	)
 	go circ.ManageCircuit()
 
