@@ -206,7 +206,11 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 	if err != nil {
 		return err
 	}
-	if c.probeTable.AddProbe(peerPeer, backwardInterIdent, pr) {
+	ok, err := c.probeTable.AddProbe(peerPeer, backwardInterIdent, pr, false)
+	if err != nil {
+		return err
+	}
+	if ok {
 		return errors.New("existing unexpired identical probe exists")
 	}
 
@@ -251,7 +255,7 @@ func (c *sessionControlState) finalizeCircuitProbe(pend *pendingCircuitIdentityL
 				}
 			}()
 
-			controlManager := s.GetOrPutData(1, nil)
+			controlManager := s.GetOrPutData(sessionControlStateMarker, nil)
 			if controlManager == nil {
 				return nil // Happens if the control stream is not open yet.
 			}
@@ -352,7 +356,7 @@ func (c *sessionControlState) handleCircuitTermination(
 	)
 
 	var circHandler CircuitBuiltHandler
-	handlerInter := c.config.Session.GetOrPutData(2, nil)
+	handlerInter := c.config.Session.GetOrPutData(CircuitBuiltHandlerMarker, nil)
 	if handlerInter != nil {
 		circHandler = handlerInter.(CircuitBuiltHandler)
 	}

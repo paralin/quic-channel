@@ -17,6 +17,9 @@ import (
 	"github.com/fuserobotics/quic-channel/session"
 )
 
+// CircuitBuiltHandlerMarker is the key for the CircuitBuiltHandler in storage.
+var CircuitBuiltHandlerMarker = &struct{ circuitBuiltHandlerMarker uint32 }{}
+
 // CircuitBuiltHandler is assigned to the session data.
 type CircuitBuiltHandler interface {
 	// CircuitBuilt handles a new circuit. If returning err, will kill the circuit.
@@ -168,7 +171,7 @@ func (h *circuitStreamHandler) handleCircuitInit(ctx context.Context, pkt *Circu
 	pendingInit.ourHopIdx = ourHopIdx
 
 	// Grab the control manager
-	streamCtlInter := h.config.Session.GetOrPutData(1, nil)
+	streamCtlInter := h.config.Session.GetOrPutData(sessionControlStateMarker, nil)
 	if streamCtlInter == nil {
 		return errors.New("got circuit build before control stream built")
 	}
@@ -280,7 +283,7 @@ func (h *circuitStreamHandler) handleCircuitEstablished(ctx context.Context, pkt
 
 	if h.circuit != nil {
 		h.config.Log.Debug("Circuit finalized")
-		handlerInter := h.config.Session.GetOrPutData(2, nil)
+		handlerInter := h.config.Session.GetOrPutData(CircuitBuiltHandlerMarker, nil)
 		if handlerInter != nil {
 			handler := handlerInter.(CircuitBuiltHandler)
 			if err := handler.CircuitBuilt(h.circuit); err != nil {
@@ -372,7 +375,7 @@ func (h *circuitStreamHandler) finalizeCircuitInit(ctx context.Context, pi *pend
 		)
 
 		var handler CircuitBuiltHandler
-		handlerInter := h.config.Session.GetOrPutData(2, nil)
+		handlerInter := h.config.Session.GetOrPutData(CircuitBuiltHandlerMarker, nil)
 		if handlerInter != nil {
 			handler = handlerInter.(CircuitBuiltHandler)
 		}

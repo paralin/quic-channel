@@ -91,6 +91,11 @@ func (c *Circuit) GetRoute() *route.ParsedRoute {
 	return c.routeProbe
 }
 
+// GetContext returns a context that is canceled when the circuit is disposed.
+func (c *Circuit) GetContext() context.Context {
+	return c.ctx
+}
+
 // GetPeer gets the circuit peer.
 func (c *Circuit) GetPeer() *peer.Peer {
 	return c.peer

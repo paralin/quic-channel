@@ -12,5 +12,10 @@ import (
 
 // defaultNetworkingProtocol returns the default protocol.
 func defaultNetworkingProtocol(tlsConf *tls.Config) netproto.Protocol {
-	return quic.NewQuic(&proto.Config{}, tlsConf)
+	return quic.NewQuic(
+		&proto.Config{
+			KeepAlive: true,
+		},
+		tlsConf,
+	)
 }

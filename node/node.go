@@ -204,9 +204,12 @@ func (n *Node) HandleSession(sess netproto.Session) error {
 		// sess.Close(err)
 		sess.Close()
 	} else {
-		s.GetOrPutData(2, func() interface{} {
-			return circuit.CircuitBuiltHandler(&n.sessionHandler)
-		})
+		s.GetOrPutData(
+			circuit.CircuitBuiltHandlerMarker,
+			func() (interface{}, context.Context) {
+				return circuit.CircuitBuiltHandler(&n.sessionHandler), s.GetContext()
+			},
+		)
 	}
 
 	return err

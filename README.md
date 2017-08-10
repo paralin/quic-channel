@@ -97,8 +97,6 @@ We must aim to minimize the number of packets sent over the network for routing.
  
  - Route probes have a expiration time
  - Route probes are kept in memory, and re-transmitted over new peer connections when they become available.
- - 
- 
  
 ## Packet Addressing
 

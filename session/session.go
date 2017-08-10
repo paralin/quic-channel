@@ -16,6 +16,7 @@ import (
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/network"
 	"github.com/fuserobotics/quic-channel/packet"
+	"github.com/fuserobotics/quic-channel/zoo"
 )
 
 // handshakeTimeout is the time allowed for a handshake.
@@ -26,6 +27,8 @@ var sessionIdCtr int = 1
 
 // Session manages a connection with a remote peer.
 type Session struct {
+	*zoo.Zoo
+
 	id                int
 	context           context.Context
 	log               *log.Entry
@@ -47,9 +50,6 @@ type Session struct {
 	streamHandlersMtx     sync.Mutex
 	streamHandlers        map[uint32]StreamHandler
 	streamHandlerBuilders StreamHandlerBuilders
-
-	sessionDataMtx sync.Mutex
-	sessionData    map[uint32]interface{}
 }
 
 // SessionReadyDetails contains information about the session becoming ready.
@@ -92,21 +92,21 @@ type SessionConfig struct {
 // NewSession builds a new session.
 func NewSession(config SessionConfig) (*Session, error) {
 	s := &Session{
+		Zoo:                   zoo.NewZoo(),
 		id:                    sessionIdCtr,
-		started:               time.Now(),
 		context:               config.Context,
 		session:               config.Session,
 		manager:               config.Manager,
-		inactivityTimeout:     handshakeTimeout,
-		streamHandlerBuilders: config.HandlerBuilders,
-		inactivityTimer:       time.NewTimer(handshakeTimeout),
-		pumpErrors:            make(chan error, 2),
-		sessionData:           make(map[uint32]interface{}),
-		streamHandlers:        make(map[uint32]StreamHandler),
 		localIdentity:         config.LocalIdentity,
-		log:                   log.WithField("session", sessionIdCtr),
 		caCert:                config.CaCertificate,
 		tlsConfig:             config.TLSConfig,
+		streamHandlerBuilders: config.HandlerBuilders,
+		started:               time.Now(),
+		inactivityTimer:       time.NewTimer(handshakeTimeout),
+		inactivityTimeout:     handshakeTimeout,
+		pumpErrors:            make(chan error, 2),
+		streamHandlers:        make(map[uint32]StreamHandler),
+		log:                   log.WithField("session", sessionIdCtr),
 	}
 	sessionIdCtr++
 	if config.LocalIdentity == nil || config.LocalIdentity.GetPrivateKey() == nil {
@@ -144,6 +144,11 @@ func (s *Session) GetStartTime() time.Time {
 	return s.started
 }
 
+// GetContext returns the context for this session.
+func (s *Session) GetContext() context.Context {
+	return s.childContext
+}
+
 // SetStartTime overrides the built-in start time.
 func (s *Session) SetStartTime(t time.Time) {
 	s.started = t
@@ -172,30 +177,6 @@ func (s *Session) ResetInactivityTimeout(dur time.Duration) {
 	}
 
 	s.inactivityTimer.Reset(dur)
-}
-
-// GetOrPutData gets the existing session data by ID or creates it.
-func (s *Session) GetOrPutData(id uint32, builder func() interface{}) interface{} {
-	s.sessionDataMtx.Lock()
-	defer s.sessionDataMtx.Unlock()
-
-	data, ok := s.sessionData[id]
-	if !ok && builder != nil {
-		data = builder()
-		if data == nil {
-			return nil
-		}
-		s.sessionData[id] = data
-	}
-	return data
-}
-
-// DeleteData removes data from the session data store.
-func (s *Session) DeleteData(id uint32) {
-	s.sessionDataMtx.Lock()
-	defer s.sessionDataMtx.Unlock()
-
-	delete(s.sessionData, id)
 }
 
 // OpenStream attempts to open a stream with a handler.

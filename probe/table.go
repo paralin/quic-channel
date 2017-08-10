@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"sync"
 	"time"
 
@@ -104,14 +105,22 @@ func (p *ProbeTable) PurgePeerInterface(peer *peer.Peer, interfaceID uint32) {
 }
 
 // AddProbe adds a probe coming from a peer interface to the table, and returns if it's a duplicate.
-func (p *ProbeTable) AddProbe(peer *peer.Peer, interfaceID uint32, probe *route.ParsedRoute) bool {
+func (p *ProbeTable) AddProbe(
+	peer *peer.Peer,
+	interfaceID uint32,
+	probe *route.ParsedRoute,
+	overwrite bool,
+) (bool, error) {
 	if probe.TimeTillExpiration() <= 0 {
-		return false
+		return false, errors.New("probe has already expired, not adding to table")
 	}
 	probe.SetIncomingInterface(interfaceID)
 
 	peerInterHash := hashPeerAndInterface(peer, interfaceID)
-	segmentsHash := probe.HashRouteSegmentsSha1()
+	segmentsHash, err := probe.HashRouteSegmentIdentifiers(p.caCert)
+	if err != nil {
+		return false, err
+	}
 
 	p.tableMtx.Lock()
 	defer p.tableMtx.Unlock()
@@ -128,10 +137,10 @@ func (p *ProbeTable) AddProbe(peer *peer.Peer, interfaceID uint32, probe *route.
 			existingProbe = nil
 		}
 	}
-	if existingProbe == nil {
+	if existingProbe == nil || overwrite {
 		peerInterTable[segmentsHash] = probe
 	}
-	return existingProbe != nil
+	return existingProbe != nil, nil
 }
 
 // LookupProbes returns all active route probes not including a peer.

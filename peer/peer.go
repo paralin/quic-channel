@@ -10,6 +10,7 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/fuserobotics/quic-channel/identity"
 	"github.com/fuserobotics/quic-channel/session"
+	"github.com/fuserobotics/quic-channel/zoo"
 )
 
 // PeerManager manages a peer.
@@ -20,6 +21,8 @@ type PeerManager interface {
 
 // Peer tracks a known peer.
 type Peer struct {
+	*zoo.Zoo
+
 	mtx     sync.Mutex
 	manager PeerManager
 
@@ -29,6 +32,15 @@ type Peer struct {
 	identity *identity.ParsedIdentity
 	// Circuit sessions
 	circuitSessions []*session.Session
+}
+
+// NewPeer builds a new peer with a public key hash.
+func NewPeer(manager PeerManager, publicKeyHash []byte) *Peer {
+	return &Peer{
+		Zoo:           zoo.NewZoo(),
+		publicKeyHash: publicKeyHash,
+		manager:       manager,
+	}
 }
 
 // IsIdentified checks if we know this peer's identity.
@@ -204,13 +216,5 @@ func (p *Peer) RemoveSession(sess *session.Session, err error) {
 			p.circuitSessions = p.circuitSessions[:len(p.circuitSessions)-1]
 			return
 		}
-	}
-}
-
-// NewPeer builds a new peer with a public key hash.
-func NewPeer(manager PeerManager, publicKeyHash []byte) *Peer {
-	return &Peer{
-		publicKeyHash: publicKeyHash,
-		manager:       manager,
 	}
 }

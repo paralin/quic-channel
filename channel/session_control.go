@@ -13,6 +13,9 @@ import (
 	"github.com/fuserobotics/quic-channel/session"
 )
 
+// sessionControlStateMarker is the marker for the control state in the session storage
+var sessionControlStateMarker = &struct{ sessionControlStateMarker uint32 }{}
+
 // sessionControlState is the state for the session's control data.
 type sessionControlState struct {
 	context    context.Context

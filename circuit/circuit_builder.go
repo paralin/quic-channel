@@ -52,7 +52,7 @@ func NewCircuitBuilder(
 		localIdentity: localIdentity,
 
 		channelBuilt:    make(chan circuitSessionPair, 10),
-		setPreventUntil: make(chan *time.Time, 1), // important that this is buffered with 1
+		setPreventUntil: make(chan time.Time, 1), // important that this is buffered with 1
 	}
 	cb.ctx, cb.ctxCancel = context.WithCancel(ctx)
 	return cb
@@ -145,7 +145,7 @@ func (cb *CircuitBuilder) emitCircuitProbe() error {
 
 	pprobe := route.BuildParsedRoute(probe.Clone())
 	pprobe.SetIncomingInterface(0)
-	cb.probeTable.AddProbe(usPeer, 0, pprobe)
+	cb.probeTable.AddProbe(usPeer, 0, pprobe, true)
 
 	return cb.peerDb.ForEachPeer(func(p *peer.Peer) (peerErr error) {
 		if p == usPeer || !p.IsIdentified() {
@@ -171,7 +171,7 @@ func (cb *CircuitBuilder) emitCircuitProbe() error {
 				return nil
 			}
 
-			controllerInter := s.GetOrPutData(1, nil)
+			controllerInter := s.GetOrPutData(sessionControlStateMarker, nil)
 			if controllerInter == nil {
 				return nil
 			}

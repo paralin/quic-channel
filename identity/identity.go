@@ -35,6 +35,11 @@ func (i *ParsedIdentity) verifyPrivateKey() error {
 	if i.privateKey == nil {
 		return errors.New("Private key is nil.")
 	}
+
+	if err := i.privateKey.Validate(); err != nil {
+		return err
+	}
+
 	// get the leaf of the cert chain.
 	if len(i.certs) < 1 {
 		return errors.New("Certificate chain must be set before the private key.")
@@ -75,6 +80,9 @@ func (i *ParsedIdentity) CompareTo(other *ParsedIdentity) bool {
 // SetPrivateKey sets the private key of this identity.
 func (i *ParsedIdentity) SetPrivateKey(key *rsa.PrivateKey) (err error) {
 	i.privateKey = key
+	if key != nil {
+		key.Precompute()
+	}
 
 	defer func() {
 		if err != nil {

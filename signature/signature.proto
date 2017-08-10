@@ -1,6 +1,12 @@
 syntax = "proto3";
 package signature;
 
+// EncryptedMessage is an RSA PKI encrypted message.
+message EncryptedMessage {
+  ESignedMessageHash hash_type = 1;
+  bytes cipher_text = 2;
+}
+
 // SignedMessage is a signed protobuf message.
 message SignedMessage {
   bytes message = 1;

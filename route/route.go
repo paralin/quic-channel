@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/x509"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -48,6 +49,32 @@ func (p *ParsedRoute) GetIncomingInterface() uint32 {
 // SetIncomingInterface sets the incoming interface.
 func (p *ParsedRoute) SetIncomingInterface(inter uint32) {
 	p.incomingInter = inter
+}
+
+// RouteSegmentsSha1 is the sha1 hash of the segments.
+type RouteSegmentsSha1 [sha1.Size]byte
+
+// HashRouteSegmentIdentifiers returns the sha1 hash of the route segment from/to and from/to interfaces.
+// This can be used as a unique identifier to describe the route.
+func (p *ParsedRoute) HashRouteSegmentIdentifiers(ca *x509.Certificate) (RouteSegmentsSha1, error) {
+	var res RouteSegmentsSha1
+	h := sha1.New()
+	hops, err := p.DecodeHops(ca)
+	if err != nil {
+		return res, err
+	}
+
+	for _, seg := range hops {
+		binary.Write(h, binary.BigEndian, seg.GetBackwardInterface())
+		binary.Write(h, binary.BigEndian, seg.GetForwardInterface())
+		ident := seg.GetIdentity()
+		if ident != nil {
+			h.Write(ident.GetMatchPublicKey())
+		}
+	}
+
+	copy(res[:], h.Sum(nil))
+	return res, nil
 }
 
 // Verify attempts to parse and verify the entire route.
@@ -325,21 +352,6 @@ func (r *Route) HashRouteSegments() (*signature.DataHash, error) {
 		signature.ESignedMessageHash_HASH_SHA256,
 		segBuffer.Bytes(),
 	)
-}
-
-// RouteSegmentsSha1 is the sha1 hash of the segments.
-type RouteSegmentsSha1 [sha1.Size]byte
-
-// HashRouteSegmentsSha1 returns the sha1 hash of the route segments.
-func (r *Route) HashRouteSegmentsSha1() RouteSegmentsSha1 {
-	h := sha1.New()
-	for _, seg := range r.Hop {
-		h.Write(seg.Message)
-	}
-
-	var res [sha1.Size]byte
-	copy(res[:], h.Sum(nil))
-	return RouteSegmentsSha1(res)
 }
 
 // PopHop removes the last hop.

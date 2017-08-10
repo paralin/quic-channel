@@ -25,14 +25,17 @@ type controlStreamHandler struct {
 // Handle manages the control stream.
 func (h *controlStreamHandler) Handle(ctx context.Context) error {
 	config := h.config
-	state := config.Session.GetOrPutData(1, func() interface{} {
-		state := newSessionControlState(ctx, config)
-		if !config.Session.IsInitiator() {
-			state.initTimestamp = config.Session.GetStartTime()
-		}
-		config.Session.StartPump(state.handleControl)
-		return state
-	}).(*sessionControlState)
+	state := config.Session.GetOrPutData(
+		sessionControlStateMarker,
+		func() (interface{}, context.Context) {
+			state := newSessionControlState(h.config.Session.GetContext(), config)
+			if !config.Session.IsInitiator() {
+				state.initTimestamp = config.Session.GetStartTime()
+			}
+			config.Session.StartPump(state.handleControl)
+			return state, h.config.Session.GetContext()
+		},
+	).(*sessionControlState)
 
 	state.activeHandlerMtx.Lock()
 	state.activeHandler = h
