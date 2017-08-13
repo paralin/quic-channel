@@ -191,3 +191,14 @@ Originally, the `identity.Identity` for each hop was included in the `route.Hop`
 This makes the packet size for a route probe explode as the hops travel outwards.
 
 Instead, a better approach is to include just the partial hash (10 bytes). If the next hop in the route does not have the peer in its PeerDb, then it will add to the PeerDb a temporary (maybe with some kind of ephemeral peer sweep in place in the future) peer entry and ping a `PeerQuery` control packet backwards to the transmitting peer over the same session.
+
+## Peer Proxying API
+
+Add an API that supports adding arbitrary transports for peers. If a peer is discovered over a one-hop connection like a serial line, or xbee, the program can connect to the networking node and advertise the connection. Normal handshaking will be performed, as if it's a UDP connection upgrade.
+
+## Metrics and Out-of-band APIs
+
+ - Generic API for building connections to services advertised on peers. (like SOCKS5)
+ - Real-time metrics for connection (estimated RTT, packet loss, # of circuits, bandwidth)
+ - Routing table live-streaming
+
